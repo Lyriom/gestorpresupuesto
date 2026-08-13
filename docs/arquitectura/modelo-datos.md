@@ -1251,6 +1251,12 @@ CREATE TRIGGER trg_transaction_splits_totals
     FOR EACH ROW EXECUTE FUNCTION refresh_transaction_split_totals();
 ```
 
+**Consecuencia buscada:** borrar el **último** split de un gasto deja `split_count = 0` con
+`category_id` a `NULL` y el `CHECK` aborta la transacción. Es el comportamiento correcto —una
+transacción de gasto sin ninguna temática no debe existir— así que el servicio de «eliminar
+reparto» asigna la temática en la misma sentencia. Vale más un error inmediato y explicable que
+una transacción huérfana que desaparece de todos los informes sin dejar rastro.
+
 **Resto de CHECK**
 
 ```sql
@@ -4398,4 +4404,1035 @@ REFRESH MATERIALIZED VIEW CONCURRENTLY mv_product_price_monthly;
 
 La detección de subida inmediata (F-16), que **sí** tiene que ser instantánea, no usa la vista:
 se calcula al insertar en `product_prices` comparando con la observación anterior (sección 6.6).
+
+---
+
+## 6. Agrupación de productos entre facturas
+
+### 6.1 El reparto de responsabilidades
+
+Ya existe `normalizacion.py` con `RapidFuzz` y umbral 88. La regla de oro es **no duplicar esa
+lógica en SQL**:
+
+| Capa | Responsabilidad | Por qué ahí |
+|---|---|---|
+| `normalizacion.py` (Python) | Normalizar (`normalizar_descripcion`), generar la clave (`clave_agrupacion`) y **decidir** (`es_mismo_producto`, umbral 88) | Es la única implementación del criterio. El veto por tamaño y la primacía del código de barras son reglas de negocio, no de índice |
+| PostgreSQL + `pg_trgm` | **Preseleccionar candidatos** y resolver las coincidencias exactas | Un GIN de trigramas descarta el 99 % del catálogo sin traer nada a Python |
+| `product_aliases` | **Memorizar** la decisión | Que RapidFuzz corra una vez por grafía nueva, no una vez por línea |
+
+`pg_trgm` **nunca decide**. Si el umbral 88 de `UMBRAL_COINCIDENCIA` viviera también como un
+`similarity() > 0.88` en SQL, cambiarlo obligaría a tocar dos sitios y las dos
+implementaciones divergirían: `similarity()` de PostgreSQL y `token_set_ratio` de RapidFuzz
+**no son la misma métrica** y no dan el mismo número. El umbral de SQL es deliberadamente
+**laxo** (0,30) porque su trabajo es no perder candidatos, no acertar.
+
+### 6.2 Índices de trigramas
+
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+-- Preselección de candidatos del catálogo. GIN y no GiST: el catálogo se lee
+-- mucho más de lo que se escribe, y GIN es más rápido en búsqueda.
+CREATE INDEX ix_products_canonical_name_trgm
+    ON products USING gin (canonical_name gin_trgm_ops);
+
+-- Búsqueda por el nombre visible, para el buscador de la interfaz.
+CREATE INDEX ix_products_name_trgm
+    ON products USING gin (name gin_trgm_ops);
+
+-- Alias: cubre el caso «esta grafía ya la vi, pero no exactamente igual».
+CREATE INDEX ix_product_aliases_normalized_text_trgm
+    ON product_aliases USING gin (normalized_text gin_trgm_ops);
+
+-- Descripciones crudas ya vistas: permite explicar al usuario de dónde viene
+-- una agrupación y buscar «esa cosa que compré y no sé cómo se llamaba».
+CREATE INDEX ix_invoice_lines_normalized_description_trgm
+    ON invoice_lines USING gin (normalized_description gin_trgm_ops);
+
+-- Comercios: el mismo problema con «MERCADONA S.A.» y «Mercadona 4021».
+CREATE INDEX ix_payees_normalized_name_trgm
+    ON payees USING gin (normalized_name gin_trgm_ops);
+
+-- Concepto de las transacciones, para el filtro de texto libre (F-42).
+CREATE INDEX ix_transactions_description_trgm
+    ON transactions USING gin (description gin_trgm_ops);
+
+-- Nombre de temática, para el selector con búsqueda.
+CREATE INDEX ix_categories_name_trgm
+    ON categories USING gin (name gin_trgm_ops);
+```
+
+Umbral de sesión, fijado en la transacción de emparejamiento y **no** globalmente:
+
+```sql
+SET LOCAL pg_trgm.similarity_threshold = 0.30;
+```
+
+`gin_trgm_ops` soporta `%`, `similarity()`, `LIKE` y `ILIKE` con comodines por ambos lados. No
+se usa `gist_trgm_ops` porque no hay necesidad de `<->` (búsqueda por distancia ordenada con
+índice) y GIN es más rápido en las consultas que sí se hacen.
+
+### 6.3 El pipeline de emparejamiento, en seis niveles
+
+Se aplica a cada `LineaExtraida` cuando se guarda una factura. Los niveles están ordenados de
+mayor a menor certeza y **el primero que acierta gana**:
+
+```
+Nivel 1 · código de barras exacto          → match_method = 'barcode'        certeza total
+Nivel 2 · grouping_key exacta              → match_method = 'grouping_key'   determinista
+Nivel 3 · alias exacto (normalized_text)   → match_method = 'alias'          memorizado
+Nivel 4 · candidatos por trigrama + RapidFuzz ≥ 88 → 'trigram_fuzzy'         difuso
+Nivel 5 · RapidFuzz entre 70 y 88          → 'none' + sugerencia de revisión  duda
+Nivel 6 · nada supera 70                   → producto nuevo                   alta
+```
+
+**Niveles 1 a 3: SQL exacto, una sola consulta.**
+
+```sql
+-- Se resuelven los tres niveles de una vez y se ordenan por certeza.
+WITH candidate AS (
+    SELECT p.id, 1 AS level, 'barcode' AS method, 100.0 AS score
+      FROM products p
+     WHERE p.household_id = :hh AND p.barcode = :product_code
+       AND :product_code IS NOT NULL AND p.merged_into_id IS NULL
+    UNION ALL
+    SELECT p.id, 2, 'grouping_key', 100.0
+      FROM products p
+     WHERE p.household_id = :hh AND p.grouping_key = :grouping_key
+       AND p.merged_into_id IS NULL
+    UNION ALL
+    SELECT a.product_id, 3, 'alias', COALESCE(a.match_score, 100.0)
+      FROM product_aliases a
+     WHERE a.household_id = :hh AND a.normalized_text = :canonical
+)
+SELECT id, method, score FROM candidate ORDER BY level LIMIT 1;
+```
+
+**Nivel 4: preselección por trigrama.** Solo si los tres anteriores fallan. Se traen como
+mucho 20 candidatos, **ya filtrados por el veto de tamaño** para no gastar comparaciones
+difusas en productos que `es_mismo_producto()` va a rechazar de todas formas:
+
+```sql
+SELECT p.id,
+       p.canonical_name,
+       p.brand,
+       p.size_value,
+       p.size_unit,
+       p.barcode,
+       similarity(p.canonical_name, :canonical) AS trgm_score
+  FROM products p
+ WHERE p.household_id = :hh
+   AND p.merged_into_id IS NULL
+   AND p.archived_at IS NULL
+   AND p.canonical_name % :canonical            -- usa el índice GIN
+   -- Veto de tamaño replicado en SQL solo como PREFILTRO, no como decisión:
+   -- si ambos tienen tamaño y no coincide, no hay nada que comparar.
+   AND (
+        :size_unit IS NULL OR p.size_unit IS NULL
+        OR (p.size_unit = :size_unit AND p.size_value = :size_value)
+   )
+ ORDER BY similarity(p.canonical_name, :canonical) DESC
+ LIMIT 20;
+```
+
+Y la decisión final, en Python, con el código que ya existe:
+
+```python
+from app.services.normalizacion import (
+    DescripcionNormalizada,
+    UMBRAL_COINCIDENCIA,   # 88.0
+    es_mismo_producto,
+    mejor_coincidencia,
+)
+
+candidatos = {str(fila.id): fila.canonical_name for fila in filas_trgm}
+resultado = mejor_coincidencia(normalizada.canonica, candidatos)
+
+if resultado is not None:
+    product_id, puntuacion = resultado
+    # Segunda comprobación con la firma completa: aplica el veto de tamaño
+    # y la primacía del código de barras, que mejor_coincidencia() no ve.
+    if es_mismo_producto(normalizada, firma_del_producto(product_id)):
+        enlazar(product_id, metodo="trigram_fuzzy", score=puntuacion)
+```
+
+**Nivel 5: la zona de duda.** Entre 70 y `UMBRAL_COINCIDENCIA` la línea se guarda con
+`product_id = NULL` y `match_method = 'none'`, pero se genera una sugerencia para la pantalla
+de revisión (F-14): «¿Es "Aceite de oliva virgen extra Carbonell 1 l"? (84 % de parecido)».
+La decisión del usuario se guarda como alias con `confirmed_by_id`, y a partir de ahí esa
+grafía se resuelve en el nivel 3.
+
+**Nivel 6: producto nuevo.** Se crea con `grouping_key`, `canonical_name`, `brand`,
+`size_value`, `size_unit` y `barcode` tomados de `DescripcionNormalizada`, y se registra el
+alias de su primera grafía.
+
+### 6.4 Alta del alias y memorización
+
+Tras cualquier enlace, con éxito o confirmado a mano:
+
+```sql
+INSERT INTO product_aliases
+       (id, household_id, product_id, normalized_text, grouping_key, raw_sample,
+        payee_id, match_method, match_score, times_seen, last_seen_on)
+VALUES (gen_random_uuid(), :hh, :product_id, :canonical, :grouping_key, :raw_description,
+        :payee_id, :match_method, :match_score, 1, :issued_on)
+ON CONFLICT (household_id, normalized_text) DO UPDATE
+   SET times_seen   = product_aliases.times_seen + 1,
+       last_seen_on = greatest(product_aliases.last_seen_on, EXCLUDED.last_seen_on),
+       -- Un alias confirmado por una persona NO se reescribe con una heurística.
+       product_id   = CASE WHEN product_aliases.confirmed_at IS NOT NULL
+                           THEN product_aliases.product_id
+                           ELSE EXCLUDED.product_id END,
+       match_score  = greatest(product_aliases.match_score, EXCLUDED.match_score);
+```
+
+La cláusula `CASE WHEN product_aliases.confirmed_at IS NOT NULL` es la que garantiza que una
+corrección manual del usuario sea permanente. Sin ella, la siguiente factura con esa grafía
+volvería a aplicar la heurística y desharía la corrección: exactamente el antipatrón
+documentado de «parser que no aprende del error».
+
+### 6.5 Encaje con `clave_agrupacion()`
+
+`clave_agrupacion()` ya devuelve una clave determinista con tres propiedades que el esquema
+aprovecha directamente:
+
+1. **Prefijo `cod:` cuando hay código**, lo que hace la clave inmune a las variaciones de
+   redacción. En la base de datos eso es simplemente otro valor de `grouping_key`; el índice
+   único funciona igual.
+2. **Palabras ordenadas y deduplicadas**, de forma que «brik leche pascual» y
+   «leche pascual brik» producen la misma clave. Esto resuelve sin coste el caso más frecuente
+   entre proveedores distintos, y por eso el nivel 2 del pipeline captura la mayoría de las
+   coincidencias antes de llegar al trigrama.
+3. **El tamaño va en la clave** (`…|1 l`), coherente con el veto de `es_mismo_producto()`:
+   leche de 1 l y de 500 ml son productos distintos y no comparten serie de precio unitario.
+
+Consecuencia de diseño: `uq_products_household_id_grouping_key` **es** la identidad del
+producto. Si dos productos acaban con la misma clave por una corrección manual, la salida es la
+**fusión de productos** (`merge_operations` con `entity_type = 'product'`, sección 4 aplicada a
+`invoice_lines`, `product_prices` y `product_aliases`), nunca un `UPDATE` que viole el índice.
+
+### 6.6 Alta del precio y detección de subida (F-16, F-38, F-60)
+
+Al confirmar la revisión de una factura, cada línea con producto y precio unitario genera una
+observación. El `change_pct` se calcula **en la misma sentencia**, comparando con la última
+observación del mismo producto y el mismo proveedor:
+
+```sql
+WITH previous AS (
+    SELECT pp.unit_price
+      FROM product_prices pp
+     WHERE pp.household_id = :hh
+       AND pp.product_id = :product_id
+       AND pp.payee_id IS NOT DISTINCT FROM :payee_id
+       AND NOT pp.is_promotion
+     ORDER BY pp.priced_on DESC, pp.created_at DESC
+     LIMIT 1
+)
+INSERT INTO product_prices
+       (id, household_id, product_id, payee_id, invoice_line_id, priced_on,
+        unit_price, unit, quantity, line_total, currency, source, change_pct)
+SELECT gen_random_uuid(), :hh, :product_id, :payee_id, :invoice_line_id, :issued_on,
+       :unit_price, :unit, :quantity, :line_total, :currency, 'invoice',
+       round(100 * (:unit_price - prev.unit_price) / NULLIF(prev.unit_price, 0), 2)
+  FROM (SELECT unit_price FROM previous
+        UNION ALL SELECT NULL WHERE NOT EXISTS (SELECT 1 FROM previous)) AS prev
+ON CONFLICT (invoice_line_id) DO NOTHING
+RETURNING id, change_pct;
+```
+
+`ON CONFLICT (invoice_line_id) DO NOTHING` hace la operación idempotente: revisar dos veces la
+misma factura no duplica la serie de precios.
+
+El aviso se crea si `change_pct` supera el umbral del producto o, en su defecto, el del hogar:
+
+```sql
+INSERT INTO alerts (id, household_id, type, severity, status, title, body,
+                    dedupe_key, subject_table, subject_id, payload)
+SELECT gen_random_uuid(), :hh, 'product_price_increase',
+       CASE WHEN pp.change_pct >= 15 THEN 'warning' ELSE 'info' END,
+       'new',
+       format('%s ha subido un %s%%', p.name, pp.change_pct),
+       format('De %s a %s €/%s en %s', :previous_price, pp.unit_price,
+              COALESCE(pp.unit, 'ud'), COALESCE(pe.name, 'proveedor desconocido')),
+       format('product_price_increase:%s:%s', pp.product_id, pp.priced_on),
+       'product_prices', pp.id,
+       jsonb_build_object('product_id', pp.product_id, 'change_pct', pp.change_pct,
+                          'unit_price', pp.unit_price, 'payee_id', pp.payee_id)
+  FROM product_prices pp
+  JOIN products p ON p.id = pp.product_id
+  LEFT JOIN payees pe ON pe.id = pp.payee_id
+  JOIN households h ON h.id = pp.household_id
+ WHERE pp.id = :price_id
+   AND pp.change_pct >= COALESCE(p.price_alert_threshold_pct, h.price_alert_pct)
+ON CONFLICT (household_id, dedupe_key) DO NOTHING;
+```
+
+**Evolución del precio de un producto** (F-15), con la variación entre observaciones:
+
+```sql
+SELECT pp.priced_on,
+       pp.unit_price,
+       pp.unit,
+       pe.name AS payee,
+       pp.is_promotion,
+       lag(pp.unit_price) OVER w                                     AS previous_price,
+       round(100 * (pp.unit_price - lag(pp.unit_price) OVER w)
+             / NULLIF(lag(pp.unit_price) OVER w, 0), 2)              AS change_pct
+  FROM product_prices pp
+  LEFT JOIN payees pe ON pe.id = pp.payee_id
+ WHERE pp.household_id = :hh AND pp.product_id = :product_id
+WINDOW w AS (PARTITION BY pp.payee_id ORDER BY pp.priced_on)
+ ORDER BY pp.priced_on;
+```
+
+La ventana particiona **por proveedor**: comparar el precio de Mercadona con el de la
+gasolinera daría subidas y bajadas ficticias. Esa es también la razón de que el índice
+`ix_product_prices_household_id_payee_id_product_id_priced_on` exista.
+
+**Comparador entre proveedores** (F-38):
+
+```sql
+SELECT DISTINCT ON (pe.id)
+       pe.id, pe.name, pp.unit_price, pp.unit, pp.priced_on
+  FROM product_prices pp
+  JOIN payees pe ON pe.id = pp.payee_id
+ WHERE pp.household_id = :hh AND pp.product_id = :product_id
+   AND NOT pp.is_promotion
+ ORDER BY pe.id, pp.priced_on DESC;
+```
+
+**Cesta de la compra comparada** (F-60):
+
+```sql
+WITH latest AS (
+    SELECT DISTINCT ON (pp.product_id, pp.payee_id)
+           pp.product_id, pp.payee_id, pp.unit_price
+      FROM product_prices pp
+      JOIN products p ON p.id = pp.product_id
+     WHERE pp.household_id = :hh
+       AND p.is_basket_item
+       AND p.archived_at IS NULL
+       AND NOT pp.is_promotion
+       AND pp.priced_on >= current_date - interval '120 days'
+     ORDER BY pp.product_id, pp.payee_id, pp.priced_on DESC
+),
+basket_size AS (
+    SELECT count(*) AS total FROM products
+     WHERE household_id = :hh AND is_basket_item AND archived_at IS NULL
+)
+SELECT pe.name,
+       count(*)                                        AS products_priced,
+       (SELECT total FROM basket_size)                 AS basket_size,
+       sum(l.unit_price)::numeric(14,4)                AS basket_cost,
+       -- Coste extrapolado: solo tiene sentido si falta poco por cubrir.
+       CASE WHEN count(*) >= (SELECT total FROM basket_size) * 0.8
+            THEN (sum(l.unit_price) * (SELECT total FROM basket_size)
+                  / count(*))::numeric(14,4) END       AS estimated_full_cost
+  FROM latest l
+  JOIN payees pe ON pe.id = l.payee_id
+ GROUP BY pe.id, pe.name
+ ORDER BY basket_cost;
+```
+
+`products_priced` frente a `basket_size` es información obligatoria en la presentación: una
+tienda donde solo se han comprado 3 de los 20 productos de la cesta parecería la más barata si
+se mostrase únicamente `basket_cost`. `estimated_full_cost` solo se calcula con una cobertura
+≥ 80 %; por debajo se muestra «datos insuficientes», no un número inventado.
+
+---
+
+## 7. Multi-tenencia
+
+### 7.1 Raíz de tenencia: `household_id` en todas las tablas, desde el día uno
+
+**Decisión: la unidad de aislamiento es el hogar, no el usuario.** Al registrarse, cada usuario
+recibe automáticamente un `households` propio («Mi hogar») y una fila `household_members` con
+rol `owner`. Toda tabla de dominio lleva `household_id NOT NULL`.
+
+Comparación con la alternativa evidente:
+
+| Enfoque | Aislamiento hoy | Coste de implementar F-57 |
+|---|---|---|
+| `user_id` en cada tabla | Correcto | **Migración de 33 tablas**: añadir `household_id`, rellenarlo, cambiar 33 índices compuestos, revisar cada consulta. Semanas de trabajo y una ventana de riesgo enorme |
+| **`household_id` en cada tabla** (elegido) | Idéntico: un hogar con un solo miembro | **Cero migraciones.** F-57 es añadir filas a `household_members` y comprobar el rol en el servicio |
+
+El coste hoy es una columna con un nombre distinto. El ahorro mañana es no volver a tocar el
+esquema. `created_by_id` (en `transactions`, `invoices`, `merge_operations`…) cubre la otra
+necesidad del hogar compartido: saber **quién** hizo cada cosa, que es información de auditoría,
+no de tenencia.
+
+`transaction_tags`, `transaction_splits`, `import_rows` y las demás tablas hijas llevan
+`household_id` **redundante** (podría deducirse por `JOIN`). Es deliberado:
+
+1. Permite filtrar sin `JOIN`, lo que hace los índices compuestos utilizables.
+2. Permite una política RLS directa, sin subconsulta.
+3. Convierte «¿está esta tabla protegida?» en una pregunta que se responde mirando sus columnas.
+
+Único caso con `household_id` nulable: `extraction_templates` (plantillas de serie de la
+instalación, 2.27) y `audit_log` (eventos de autenticación previos a tener hogar). Los dos están
+documentados en su sección y sus repositorios son los únicos autorizados a usar `IS NULL`.
+
+### 7.2 Capa 1 — Un único punto de paso en el repositorio
+
+La garantía primaria es que **ninguna consulta se construya sin el filtro**. No se logra con
+disciplina, se logra haciendo que sea imposible escribir una consulta sin él.
+
+```python
+@dataclass(frozen=True, slots=True)
+class RequestScope:
+    """Contexto de tenencia de la petición. Se construye SOLO desde el token."""
+    user_id: UUID
+    household_id: UUID
+    role: Literal["owner", "editor", "viewer"]
+
+    @property
+    def can_write(self) -> bool:
+        return self.role in ("owner", "editor")
+
+
+class HouseholdScopedRepository[T: Base]:
+    """Base de todos los repositorios de tablas con household_id."""
+
+    model: ClassVar[type[Base]]
+
+    def __init__(self, session: AsyncSession, scope: RequestScope) -> None:
+        self._session = session
+        self._scope = scope
+
+    def _base_select(self) -> Select[tuple[T]]:
+        """EL único constructor de consultas. Nada se lee por otra vía."""
+        return select(self.model).where(self.model.household_id == self._scope.household_id)
+
+    async def get(self, entity_id: UUID) -> T | None:
+        # Se filtra por id Y por household_id: un id de otro hogar devuelve None.
+        stmt = self._base_select().where(self.model.id == entity_id)
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+```
+
+Reglas que se verifican en la revisión de código y en las pruebas:
+
+1. **`household_id` no se acepta nunca del cuerpo, la ruta ni la cadena de consulta.** Sale del
+   token de acceso a través de `RequestScope`. Si un esquema de Pydantic tuviera un campo
+   `household_id`, un atacante podría escribir en otro hogar.
+2. **Toda lectura arranca en `_base_select()`.** Los `select()` sueltos en servicios están
+   prohibidos.
+3. **Al crear, `household_id` se pone desde el `scope`**, nunca desde la entrada.
+4. **Resolución por `id` + `household_id`, y se devuelve 404, no 403.** Un 403 confirmaría que
+   el recurso existe en otro hogar; el 404 no filtra nada.
+5. **Toda referencia entrante se valida contra el hogar antes de guardarse.** Si el cuerpo trae
+   `category_id`, se comprueba que esa temática es del hogar. La capa 3 lo hace además
+   imposible a nivel de esquema.
+
+Y dos pruebas automáticas que fallan la construcción si alguien se despista:
+
+```python
+TABLAS_SIN_TENENCIA = {"users", "households", "household_members",
+                       "refresh_tokens", "category_templates"}
+
+def test_todas_las_tablas_tienen_household_id() -> None:
+    """Una tabla nueva sin household_id rompe la suite. A propósito."""
+    for nombre, tabla in Base.metadata.tables.items():
+        if nombre in TABLAS_SIN_TENENCIA:
+            continue
+        assert "household_id" in tabla.c, f"{nombre} no tiene household_id"
+
+async def test_ningun_repositorio_lee_de_otro_hogar(...) -> None:
+    """Se crean dos hogares con datos y se recorre TODO repositorio con el scope
+    del hogar A, comprobando que ningún método devuelve nada del hogar B."""
+```
+
+Para las cargas perezosas del ORM, que no pasan por `_base_select()`, se añade un criterio
+global por sesión:
+
+```python
+@event.listens_for(AsyncSession.sync_session_class, "do_orm_execute")
+def _aplicar_tenencia(state: ORMExecuteState) -> None:
+    scope = state.session.info.get("scope")
+    if scope is None or not state.is_select:
+        return
+    for mapper in state.all_mappers:
+        if "household_id" in mapper.columns:
+            state.statement = state.statement.options(
+                with_loader_criteria(
+                    mapper.class_,
+                    lambda cls: cls.household_id == scope.household_id,
+                    include_aliases=True,
+                )
+            )
+```
+
+### 7.3 Capa 2 — Claves ajenas compuestas: la fuga se vuelve imposible
+
+Esta es la parte más concreta y la que más se olvida. El filtro del repositorio protege las
+**lecturas**, pero no impide una **escritura** que cruce la frontera: una transacción del hogar
+A apuntando a una temática del hogar B. Si eso ocurre una sola vez, los informes de A empiezan a
+mostrar el nombre de una temática de B.
+
+Se cierra con claves ajenas compuestas. Cada tabla referenciada declara
+`UNIQUE (household_id, id)` (ya está en 2.5, 2.7, 2.10, 2.11, 2.16, 2.22, 2.24) y cada
+referencia usa las dos columnas:
+
+```sql
+ALTER TABLE transactions
+    ADD CONSTRAINT fk_transactions_household_id_category_id
+    FOREIGN KEY (household_id, category_id)
+    REFERENCES categories (household_id, id) ON DELETE RESTRICT;
+
+ALTER TABLE transactions
+    ADD CONSTRAINT fk_transactions_household_id_account_id
+    FOREIGN KEY (household_id, account_id)
+    REFERENCES accounts (household_id, id) ON DELETE RESTRICT;
+
+ALTER TABLE transactions
+    ADD CONSTRAINT fk_transactions_household_id_payee_id
+    FOREIGN KEY (household_id, payee_id)
+    REFERENCES payees (household_id, id) ON DELETE SET NULL;
+
+ALTER TABLE transaction_splits
+    ADD CONSTRAINT fk_transaction_splits_household_id_category_id
+    FOREIGN KEY (household_id, category_id)
+    REFERENCES categories (household_id, id) ON DELETE RESTRICT;
+
+ALTER TABLE budget_allocations
+    ADD CONSTRAINT fk_budget_allocations_household_id_category_id
+    FOREIGN KEY (household_id, category_id)
+    REFERENCES categories (household_id, id) ON DELETE RESTRICT;
+
+ALTER TABLE budget_allocations
+    ADD CONSTRAINT fk_budget_allocations_household_id_budget_period_id
+    FOREIGN KEY (household_id, budget_period_id)
+    REFERENCES budget_periods (household_id, id) ON DELETE CASCADE;
+
+ALTER TABLE invoice_lines
+    ADD CONSTRAINT fk_invoice_lines_household_id_product_id
+    FOREIGN KEY (household_id, product_id)
+    REFERENCES products (household_id, id) ON DELETE SET NULL;
+
+ALTER TABLE invoice_lines
+    ADD CONSTRAINT fk_invoice_lines_household_id_invoice_id
+    FOREIGN KEY (household_id, invoice_id)
+    REFERENCES invoices (household_id, id) ON DELETE CASCADE;
+
+ALTER TABLE product_prices
+    ADD CONSTRAINT fk_product_prices_household_id_product_id
+    FOREIGN KEY (household_id, product_id)
+    REFERENCES products (household_id, id) ON DELETE RESTRICT;
+
+-- Y así en todas las referencias entre tablas de dominio.
+```
+
+**El detalle que hace que esto funcione con columnas opcionales:** una clave ajena compuesta
+con `MATCH SIMPLE` (el comportamiento por omisión en PostgreSQL) **no se comprueba si alguna de
+sus columnas es `NULL`**. Como `household_id` es siempre `NOT NULL` y `category_id` puede ser
+`NULL`, la restricción se aplica exactamente cuando hay referencia y se ignora cuando no la hay.
+No hace falta `MATCH FULL` ni ningún truco.
+
+Coste: cada FK compuesta necesita el índice `UNIQUE (household_id, id)` en la tabla referida —
+unas cuantas decenas de kilobytes. A cambio, **una escritura entre hogares deja de ser un error
+de programación y pasa a ser un error de base de datos**.
+
+En SQLAlchemy se declara con `ForeignKeyConstraint` a nivel de tabla:
+
+```python
+class Transaction(UUIDPrimaryKey, Timestamps, Base):
+    __tablename__ = "transactions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["household_id", "category_id"],
+            ["categories.household_id", "categories.id"],
+            ondelete="RESTRICT",
+            name="fk_transactions_household_id_category_id",
+        ),
+        UniqueConstraint("household_id", "id", name="uq_transactions_household_id_id"),
+        # ...
+    )
+```
+
+### 7.4 Capa 3 — Row Level Security como red de seguridad
+
+Las dos capas anteriores son suficientes si el código es correcto. RLS existe para el caso en
+que no lo sea: un endpoint nuevo escrito con prisa, un `text()` a pelo, un script de
+mantenimiento.
+
+```sql
+-- Rol de la aplicación: NO es el propietario de las tablas y NO tiene BYPASSRLS.
+CREATE ROLE app_rw LOGIN PASSWORD :'app_password';
+GRANT USAGE ON SCHEMA public TO app_rw;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_rw;
+REVOKE UPDATE, DELETE ON audit_log FROM app_rw;
+
+-- Por cada tabla de dominio:
+ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE transactions FORCE ROW LEVEL SECURITY;   -- afecta también al propietario
+
+CREATE POLICY tenant_isolation ON transactions
+    USING      (household_id = current_setting('app.household_id', true)::uuid)
+    WITH CHECK (household_id = current_setting('app.household_id', true)::uuid);
+```
+
+`USING` filtra lo que se puede leer; `WITH CHECK` impide **escribir** una fila de otro hogar.
+Ambas cláusulas son necesarias: con solo `USING`, un `INSERT` con `household_id` ajeno pasaría.
+
+`FORCE ROW LEVEL SECURITY` es imprescindible porque el propietario de una tabla salta sus
+propias políticas por omisión. Con `FORCE`, ni el propietario se libra; las migraciones de
+Alembic corren con un rol distinto (`app_migrator`, propietario y con `BYPASSRLS`) precisamente
+para poder hacer su trabajo.
+
+**Cómo se fija la variable con un pool de conexiones.** `SET LOCAL` tiene ámbito de
+transacción, así que es seguro con el pool de asyncpg: al terminar la transacción el valor
+desaparece y la conexión vuelve limpia al pool. La condición es que **toda** petición abra una
+transacción, lo que ya hace la dependencia de sesión:
+
+```python
+async def get_session(scope: RequestScope = Depends(get_scope)) -> AsyncIterator[AsyncSession]:
+    async with async_session_factory() as session:
+        async with session.begin():
+            await session.execute(
+                text("SELECT set_config('app.household_id', :hh, true)"),
+                {"hh": str(scope.household_id)},
+            )
+            session.info["scope"] = scope
+            yield session
+```
+
+Se usa `set_config(..., true)` en lugar de `SET LOCAL` porque acepta un parámetro enlazado; con
+`SET LOCAL` habría que interpolar el UUID en la cadena SQL, que es justo lo que no se quiere
+hacer nunca.
+
+El tercer argumento `true` significa «local a la transacción». Con `false` la variable
+sobreviviría en la conexión y **contaminaría la siguiente petición que reutilizara ese socket**:
+sería una fuga de tenencia intermitente, del tipo que solo aparece bajo carga. Es el error más
+peligroso de todo este apartado y por eso queda escrito aquí.
+
+### 7.5 Resumen de las tres capas
+
+| Capa | Qué protege | Qué falla si esta capa cae |
+|---|---|---|
+| Repositorio + `RequestScope` | Lecturas y escrituras del código normal | Nada: capas 2 y 3 lo atajan |
+| FK compuestas `(household_id, id)` | Referencias cruzadas entre hogares | Un informe podría mezclar nombres de dos hogares |
+| RLS con `app.household_id` | Cualquier consulta, incluida la escrita a mano | Solo queda la disciplina del código |
+
+Ninguna capa depende de las otras. Las tres cuestan, juntas, una columna, unos índices únicos y
+una línea en la dependencia de sesión.
+
+---
+
+## 8. Plan de migración con Alembic
+
+### 8.1 Lo que ya está configurado
+
+`backend/alembic/env.py` está listo: motor asíncrono con asyncpg, `compare_type=True`,
+`compare_server_default=True`, `target_metadata = Base.metadata` e importación de `app.models`
+para que `autogenerate` vea las tablas. `alembic.ini` usa
+`file_template = %%(year)d%%(month).2d%%(day).2d_%%(hour).2d%%(minute).2d_%%(slug)s`, de modo
+que los ficheros se ordenan por fecha.
+
+Falta una sola cosa: `app/models/__init__.py` debe importar **todos** los módulos de modelos.
+Un modelo no importado no existe para `autogenerate`, y el síntoma es una migración que
+silenciosamente omite una tabla.
+
+### 8.2 Estructura de revisiones
+
+Cinco revisiones, en este orden. Se separan porque cada una tiene un motivo distinto para
+fallar y un `downgrade` distinto.
+
+| Revisión | Slug | Contenido |
+|---|---|---|
+| 1 | `initial_schema` | Extensiones, funciones, las 39 tablas, índices, `CHECK`, FK simples |
+| 2 | `composite_tenant_fks` | Los `UNIQUE (household_id, id)` y las FK compuestas de 7.3 |
+| 3 | `views_and_triggers` | `vw_movement_lines`, `vw_account_balances`, `vw_category_tree`, `mv_product_price_monthly`, disparadores de `updated_at` y de splits, `refresh_category_paths`, `revert_merge` |
+| 4 | `row_level_security` | Rol `app_rw`, `ENABLE`/`FORCE ROW LEVEL SECURITY`, políticas |
+| 5 | `seed_category_templates` | Datos semilla en `category_templates` (sección 9) |
+
+**Por qué la 2 va aparte.** Las FK compuestas necesitan que existan los índices únicos, y
+`autogenerate` no las genera bien: al detectar `ForeignKeyConstraint` de dos columnas junto a
+una FK simple sobre la misma columna, produce duplicados. Se escriben a mano una vez y se
+comprueba con `alembic check` que después no hay deriva.
+
+**Por qué la 3 va aparte.** Vistas, funciones y disparadores son invisibles para
+`autogenerate`: si estuvieran mezclados con la 1, cualquier `--autogenerate` posterior
+propondría borrarlos. Aisladas y escritas con `op.execute()`, se versionan como cualquier otro
+cambio y se rehacen con un `CREATE OR REPLACE`.
+
+**Por qué la 5 va aparte.** Es una migración de **datos**, no de esquema. Debe poder repetirse
+(idempotente) y debe poder revertirse sin llevarse por delante datos del usuario.
+
+### 8.3 Contenido de la revisión 1, en orden estricto
+
+```python
+def upgrade() -> None:
+    # 1. Extensiones. Antes que nada: los índices GIN de trigramas dependen de esto.
+    op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+
+    # 2. Secuencia del diario de fusión.
+    op.execute("CREATE SEQUENCE merge_operation_changes_seq AS BIGINT")
+
+    # 3. Tablas sin dependencias.
+    #    users, households, category_templates
+    # 4. Tablas que dependen solo de las anteriores.
+    #    household_members, refresh_tokens, categories, accounts, payees, tags
+    # 5. Segundo nivel.
+    #    account_valuations, loan_terms, budget_periods, goals, products,
+    #    extraction_templates, categorization_rules, recurring_rules,
+    #    import_batches, net_worth_snapshots, saved_views, data_exports, audit_log
+    # 6. Tercer nivel.
+    #    transactions, invoices, budget_allocations, recurring_occurrences,
+    #    product_aliases, merge_operations, reconciliations, alerts, digest_runs
+    # 7. Cuarto nivel.
+    #    transaction_splits, transaction_tags, attachments, invoice_lines,
+    #    product_prices, goal_contributions, import_rows,
+    #    merge_operation_changes
+    # 8. FK circulares, resueltas después con ALTER.
+    #    invoices.transaction_id → transactions
+    #    transactions.reconciliation_id → reconciliations
+    #    transactions.recurring_occurrence_id → recurring_occurrences
+    #    categories.merged_into_id → categories
+    # 9. Índices que no se pueden expresar en la definición de la tabla:
+    #    funcionales (lower(...)), parciales (WHERE ...), GIN, NULLS NOT DISTINCT.
+```
+
+Las FK circulares (`invoices ↔ transactions`) se crean con `op.create_foreign_key()` al final
+en lugar de dentro de `create_table`. Es lo único que impide que la migración sea un orden
+topológico limpio, y es inevitable: la relación es genuinamente bidireccional.
+
+### 8.4 Convenciones de migración
+
+1. **Una revisión por cambio lógico.** Nunca «varios arreglos».
+2. **`downgrade()` siempre implementado.** El de la revisión 1 es un `drop_all` en orden
+   inverso. Si un `downgrade` es imposible (una migración de datos con pérdida), se documenta
+   con un `raise NotImplementedError` que explica por qué, en lugar de dejar un `pass` mudo.
+3. **Nunca se edita una revisión ya aplicada** en cualquier entorno. Se añade otra.
+4. **`autogenerate` se revisa siempre a mano.** No detecta: cambios de `CHECK`, índices
+   parciales o funcionales, `NULLS NOT DISTINCT`, `INCLUDE`, vistas, disparadores, funciones,
+   políticas RLS ni FK compuestas. Todo eso va con `op.execute()`.
+5. **Los `CHECK` con nombre explícito.** La convención de `base.py` es
+   `ck_%(table_name)s_%(constraint_name)s`, así que hay que pasar `name=` en el
+   `CheckConstraint`; sin nombre, la restricción es imposible de borrar después.
+6. **Índices grandes con `postgresql_concurrently=True`** y
+   `op.get_context().autocommit_block()`. En la migración inicial no hace falta (las tablas
+   están vacías), pero en cualquier migración posterior sobre `invoice_lines` o
+   `product_prices` es obligatorio para no bloquear la aplicación.
+7. **Los valores por defecto que la base debe conocer van como `server_default`**, no solo como
+   `default` de Python: si no, un `INSERT` con SQL crudo (el de la fusión, el del planificador)
+   fallaría por `NOT NULL`.
+8. **Enumeraciones como `VARCHAR` + `CHECK`, jamás `ENUM` de PostgreSQL.** Motivo concreto:
+   añadir un valor a un `ENUM` con `ALTER TYPE ... ADD VALUE` no se puede hacer dentro de un
+   bloque transaccional en versiones antiguas, `autogenerate` no detecta los cambios de
+   `ENUM` en absoluto, y quitar un valor exige recrear el tipo y todas las columnas que lo
+   usan. Con `VARCHAR` + `CHECK`, añadir un estado es `DROP CONSTRAINT` + `ADD CONSTRAINT`:
+   dos líneas, transaccional y detectable en una revisión.
+9. **`alembic check` en integración continua**, después de aplicar todas las migraciones sobre
+   una base vacía: si `Base.metadata` y el esquema real difieren, la construcción falla.
+10. **Prueba de ida y vuelta**: `upgrade head` → `downgrade base` → `upgrade head` sobre una
+    base efímera. Es lo único que detecta un `downgrade` roto antes de necesitarlo de verdad.
+11. **El contenedor ejecuta `alembic upgrade head` en `entrypoint.sh`** antes de arrancar
+    Uvicorn, con un bloqueo de aviso para que dos réplicas no migren a la vez:
+    `SELECT pg_advisory_lock(hashtext('alembic'))`.
+
+### 8.5 Revisión 5: semillas idempotentes
+
+```python
+def upgrade() -> None:
+    # Idempotente: se puede reaplicar sin duplicar.
+    op.execute("""
+        INSERT INTO category_templates
+               (id, template_key, parent_key, name, kind, icon, color_slot,
+                sort_order, depth, is_default, version, created_at, updated_at)
+        VALUES (gen_random_uuid(), 'housing', NULL, 'Vivienda', 'expense',
+                'house', 1, 10, 0, true, 1, now(), now()),
+               -- ... el resto del árbol de la sección 9
+        ON CONFLICT (template_key) DO UPDATE
+           SET name = EXCLUDED.name,
+               icon = EXCLUDED.icon,
+               color_slot = EXCLUDED.color_slot,
+               sort_order = EXCLUDED.sort_order,
+               updated_at = now()
+    """)
+
+def downgrade() -> None:
+    # Solo se borran las plantillas, nunca las categorías copiadas a un hogar.
+    op.execute("DELETE FROM category_templates WHERE version = 1")
+```
+
+`ON CONFLICT ... DO UPDATE` permite que una versión futura corrija un icono o un nombre sin
+crear plantillas duplicadas. **El `downgrade` no toca `categories`**: las temáticas de un hogar
+son datos del usuario y una migración a la baja no puede borrarle su historia.
+
+### 8.6 Copia del árbol al crear un hogar (onboarding, F-50)
+
+No es una migración: es código de aplicación que se ejecuta al registrarse. Se documenta aquí
+porque es la contrapartida de la revisión 5.
+
+```sql
+-- Se copia en orden de profundidad para que parent_id ya exista al insertar cada nivel.
+WITH RECURSIVE ordered AS (
+    SELECT t.*, 0 AS lvl FROM category_templates t
+     WHERE t.parent_key IS NULL AND t.is_default
+    UNION ALL
+    SELECT t.*, o.lvl + 1 FROM category_templates t
+      JOIN ordered o ON t.parent_key = o.template_key
+     WHERE t.is_default
+),
+inserted AS (
+    INSERT INTO categories
+           (id, household_id, parent_id, name, kind, color_slot, icon, sort_order,
+            depth, path_ids, sort_key, template_key, created_at, updated_at)
+    SELECT gen_random_uuid(), :hh, NULL, o.name, o.kind, o.color_slot, o.icon,
+           o.sort_order, 0, ARRAY[]::uuid[], '', o.template_key, now(), now()
+      FROM ordered o ORDER BY o.lvl, o.sort_order
+    RETURNING id, template_key
+)
+-- Se reconstruye la jerarquía por template_key y luego se recalcula la caché.
+UPDATE categories c
+   SET parent_id = p.id
+  FROM inserted i
+  JOIN category_templates t ON t.template_key = i.template_key
+  JOIN inserted ip ON ip.template_key = t.parent_key
+  JOIN categories p ON p.id = ip.id
+ WHERE c.id = i.id AND c.household_id = :hh;
+
+SELECT refresh_category_paths(:hh);
+```
+
+El `path_ids` se inserta vacío a propósito: `refresh_category_paths()` es la única función
+autorizada a escribirlo, y llamarla al final garantiza que `ck_categories_path_consistent` se
+cumpla en el `COMMIT`. Como el `CHECK` no es diferible, el `INSERT` inicial debe cumplirlo: por
+eso las raíces se insertan con `depth = 0` y `path_ids = ARRAY[id]` en la implementación real
+(el UUID se genera en Python, así que se conoce antes de insertar).
+
+---
+
+## 9. Datos semilla: árbol de temáticas por defecto
+
+Español de España, iconos [Lucide](https://lucide.dev), ranuras de color 1..12 según la tabla
+validada del sistema de diseño (`docs/ux/design-system.md`, §2.4). Las raíces reciben ranura;
+**las subtemáticas no**, porque heredan el hue de su madre y se distinguen por luminosidad
+(regla 4 del sistema de diseño).
+
+Doce raíces de gasto usan las doce ranuras. Las dos raíces adicionales de gasto reciclan
+ranura, tal y como prevé la regla 3.
+
+### 9.1 Temáticas de gasto
+
+| `template_key` | Nombre | Icono Lucide | Ranura |
+|---|---|---|---|
+| `housing` | **Vivienda** | `house` | 1 |
+| `housing.rent_mortgage` | Alquiler o hipoteca | `home` | — |
+| `housing.community_fees` | Comunidad de propietarios | `building-2` | — |
+| `housing.electricity` | Luz | `zap` | — |
+| `housing.gas` | Gas | `flame` | — |
+| `housing.water` | Agua | `droplets` | — |
+| `housing.internet_phone` | Internet y teléfono fijo | `wifi` | — |
+| `housing.home_insurance` | Seguro del hogar | `shield-check` | — |
+| `housing.maintenance` | Reparaciones y mantenimiento | `wrench` | — |
+| `housing.furnishings` | Muebles y menaje | `lamp` | — |
+| `housing.cleaning` | Limpieza y droguería | `spray-can` | — |
+| `groceries` | **Alimentación** | `shopping-cart` | 2 |
+| `groceries.supermarket` | Supermercado | `shopping-basket` | — |
+| `groceries.bakery` | Panadería y pastelería | `croissant` | — |
+| `groceries.butcher_fish` | Carnicería y pescadería | `beef` | — |
+| `groceries.greengrocer` | Fruta y verdura | `apple` | — |
+| `groceries.drinks` | Bebidas | `cup-soda` | — |
+| `groceries.takeaway` | Comida para llevar | `sandwich` | — |
+| `transport` | **Transporte** | `car` | 3 |
+| `transport.fuel` | Combustible | `fuel` | — |
+| `transport.public_transport` | Transporte público | `bus` | — |
+| `transport.taxi` | Taxi y VTC | `car-taxi-front` | — |
+| `transport.car_insurance` | Seguro del coche | `shield-check` | — |
+| `transport.car_maintenance` | Taller e ITV | `wrench` | — |
+| `transport.parking_tolls` | Parking y peajes | `circle-parking` | — |
+| `transport.fines` | Multas | `triangle-alert` | — |
+| `transport.bike` | Bicicleta y patinete | `bike` | — |
+| `leisure` | **Ocio** | `party-popper` | 4 |
+| `leisure.restaurants` | Restaurantes | `utensils` | — |
+| `leisure.bars_cafes` | Bares y cafeterías | `coffee` | — |
+| `leisure.cinema_shows` | Cine, teatro y conciertos | `clapperboard` | — |
+| `leisure.books` | Libros y cómics | `book-open` | — |
+| `leisure.games` | Videojuegos y juegos de mesa | `gamepad-2` | — |
+| `leisure.sports` | Deporte y gimnasio | `dumbbell` | — |
+| `leisure.travel` | Viajes y vacaciones | `plane` | — |
+| `leisure.hotels` | Alojamiento | `bed-double` | — |
+| `leisure.hobbies` | Aficiones | `palette` | — |
+| `health` | **Salud** | `heart-pulse` | 5 |
+| `health.pharmacy` | Farmacia | `pill` | — |
+| `health.doctor` | Médico y especialistas | `stethoscope` | — |
+| `health.dentist` | Dentista | `smile` | — |
+| `health.optician` | Óptica | `glasses` | — |
+| `health.health_insurance` | Seguro médico | `shield-plus` | — |
+| `health.physio` | Fisioterapia | `activity` | — |
+| `health.therapy` | Psicología y terapia | `brain` | — |
+| `subscriptions` | **Suscripciones** | `repeat` | 6 |
+| `subscriptions.video` | Streaming de vídeo | `monitor-play` | — |
+| `subscriptions.music` | Música y pódcast | `music` | — |
+| `subscriptions.software` | Software y nube | `cloud` | — |
+| `subscriptions.press` | Prensa y revistas | `newspaper` | — |
+| `subscriptions.mobile` | Móvil | `smartphone` | — |
+| `subscriptions.memberships` | Cuotas y asociaciones | `id-card` | — |
+| `clothing` | **Ropa y calzado** | `shirt` | 7 |
+| `clothing.clothes` | Ropa | `shirt` | — |
+| `clothing.shoes` | Calzado | `footprints` | — |
+| `clothing.accessories` | Complementos | `watch` | — |
+| `clothing.alterations` | Arreglos y tintorería | `scissors` | — |
+| `education` | **Educación** | `graduation-cap` | 8 |
+| `education.tuition` | Matrículas y cuotas | `school` | — |
+| `education.supplies` | Material escolar | `pencil` | — |
+| `education.courses` | Cursos y formación | `book-marked` | — |
+| `education.childcare` | Guardería | `baby` | — |
+| `education.extracurricular` | Actividades extraescolares | `drama` | — |
+| `pets` | **Mascotas** | `paw-print` | 9 |
+| `pets.food` | Comida | `bone` | — |
+| `pets.vet` | Veterinario | `syringe` | — |
+| `pets.grooming` | Peluquería y accesorios | `brush` | — |
+| `pets.insurance` | Seguro de mascota | `shield-check` | — |
+| `gifts` | **Regalos y donaciones** | `gift` | 10 |
+| `gifts.presents` | Regalos | `gift` | — |
+| `gifts.donations` | Donaciones y ONG | `heart-handshake` | — |
+| `gifts.celebrations` | Celebraciones | `cake` | — |
+| `personal_care` | **Cuidado personal** | `sparkles` | 11 |
+| `personal_care.hairdresser` | Peluquería y barbería | `scissors` | — |
+| `personal_care.cosmetics` | Cosmética e higiene | `droplet` | — |
+| `personal_care.beauty` | Estética y bienestar | `flower-2` | — |
+| `taxes_fees` | **Impuestos y comisiones** | `landmark` | 12 |
+| `taxes_fees.income_tax` | IRPF y declaraciones | `file-text` | — |
+| `taxes_fees.property_tax` | IBI y tasas municipales | `receipt` | — |
+| `taxes_fees.vehicle_tax` | Impuesto de circulación | `car` | — |
+| `taxes_fees.bank_fees` | Comisiones bancarias | `banknote` | — |
+| `taxes_fees.loan_interest` | Intereses de préstamos | `percent` | — |
+| `savings` | **Ahorro e inversión** | `piggy-bank` | 1 (reciclada) |
+| `savings.emergency_fund` | Fondo de emergencia | `shield` | — |
+| `savings.investment` | Aportación a inversión | `trending-up` | — |
+| `savings.pension` | Plan de pensiones | `hourglass` | — |
+| `savings.goals` | Objetivos de ahorro | `target` | — |
+| `other` | **Otros gastos** | `circle-ellipsis` | 5 (reciclada) |
+| `other.unclassified` | Sin clasificar | `circle-help` | — |
+| `other.cash_withdrawal` | Retirada de efectivo | `banknote-arrow-down` | — |
+| `other.fees_misc` | Gastos varios | `more-horizontal` | — |
+
+`other.unclassified` se crea con **`is_system = true`**: es el destino por omisión de las
+importaciones sin regla, no se puede archivar ni fusionar como origen, y su nombre no se puede
+cambiar. Es la garantía de que nunca haya una transacción sin temática.
+
+**Nota sobre «Otros».** `other` es una temática real de gasto («Otros gastos»). No debe
+confundirse con el segmento «Otros» de la BudgetBar, que es un **agregado visual** de las
+temáticas plegadas y usa el gris `--c-cat-other`, nunca una ranura de color.
+
+### 9.2 Temáticas de ingreso
+
+| `template_key` | Nombre | Icono Lucide | Ranura |
+|---|---|---|---|
+| `income` | **Ingresos** | `wallet` | 5 |
+| `income.salary` | Nómina | `badge-euro` | — |
+| `income.bonus` | Pagas extra y bonus | `plus-circle` | — |
+| `income.freelance` | Facturación por cuenta propia | `file-signature` | — |
+| `income.rental` | Alquileres | `key` | — |
+| `income.interest_dividends` | Intereses y dividendos | `trending-up` | — |
+| `income.refunds` | Devoluciones y reembolsos | `undo-2` | — |
+| `income.second_hand` | Venta de segunda mano | `tag` | — |
+| `income.benefits` | Prestaciones y ayudas | `hand-coins` | — |
+| `income.gifts_received` | Regalos recibidos | `gift` | — |
+| `income.other` | Otros ingresos | `circle-ellipsis` | — |
+
+Las temáticas de ingreso comparten la ranura 5 (verde) porque el sistema de diseño reserva
+`--c-positive` para los ingresos y no tiene sentido darles doce identidades cromáticas: en los
+informes se distinguen por nombre, y el color comunica «esto entra».
+
+### 9.3 Resumen de las semillas
+
+- 14 raíces de gasto, 12 con ranura propia y 2 recicladas.
+- 1 raíz de ingreso con 10 subtemáticas.
+- 76 subtemáticas de gasto, profundidad máxima 1 (`depth = 1`).
+- 91 filas en total en `category_templates`.
+
+Dos niveles y no tres: el árbol semilla debe ser **usable el primer día**, y F-03 garantiza que
+el usuario pueda anidar tanto como quiera después. Sembrar tres niveles obligaría al usuario a
+borrar antes de empezar, que es la peor primera impresión posible en una aplicación donde
+borrar temáticas está prohibido.
+
+---
+
+## 10. Trazabilidad de funcionalidades
+
+Comprobación de que el modelo cubre **todos** los P0 y P1, y qué queda listo para los P2.
+
+| ID | Prioridad | Cubierto por |
+|---|---|---|
+| F-01 | P0 | `budget_periods.expected_income` + transacciones `kind='income'` |
+| F-02 | P0 | `budget_allocations` + consulta 5.3 |
+| F-03 | P0 | `categories.parent_id` + `path_ids` (sección 3) |
+| F-04 | P0 | `merge_operations`, `merge_operation_changes` (sección 4) |
+| F-05 | P0 | `categories.name/color_slot/icon`; el histórico cuelga del `id`, no del nombre |
+| F-06 | P0 | `categories.archived_at` + condición de visibilidad de 5.3 |
+| F-07 | P0 | `transactions` con `payee_id`, `category_id` y `booked_on` nada más |
+| F-08 | P0 | `transaction_splits` + `ck_transactions_split_invariant` |
+| F-09 | P0 | `transactions.kind='transfer'` + `transfer_group_id` |
+| F-10 | P0 | `accounts.type` + `ck_accounts_class_matches_type` |
+| F-11 | P0 | `vw_account_balances`, `account_valuations`, `net_worth_snapshots` |
+| F-12 | P0 | `invoices` + `attachments` |
+| F-13 | P0 | `invoice_lines` (correspondencia con `LineaExtraida` en 2.23) |
+| F-14 | P0 | `invoices.status`, `confidence`, `warnings`; `invoice_lines.is_reviewed`, `was_edited` |
+| F-15 | P0 | `product_prices` |
+| F-16 | P0 | `product_prices.change_pct` + `alerts.product_price_increase` |
+| F-17 | P0 | `invoice_lines.category_id`, `products.category_id`, `payees.default_category_id` |
+| F-18 | P0 | Consulta 5.3 |
+| F-19 | P0 | Consulta 5.5 con `lag()` |
+| F-20 | P0 | `alerts.budget_overspend` / `budget_near_limit` + `households.near_limit_pct` |
+| F-21 | P0 | `attachments.transaction_id` |
+| F-22 | P0 | `users`, `refresh_tokens` |
+| F-23 | P0 | `users.theme` |
+| F-24 | P0 | Sin implicación en el modelo |
+| F-25 | P0 | `import_batches`, `import_rows` |
+| F-26 | P1 | `budget_allocations.rollover_mode`, `carryover_in`; cierre en 2.17 |
+| F-27 | P1 | `categorization_rules` + `transactions.applied_rule_id` |
+| F-28 | P1 | `recurring_rules`, `recurring_occurrences` |
+| F-29 | P1 | `recurring_rules.origin='detected'`, `detection_confidence`, `is_subscription` |
+| F-30 | P1 | `recurring_occurrences.amount_change_pct` + `alerts.recurring_price_increase` |
+| F-31 | P1 | `goals`, `goal_contributions` |
+| F-32 | P1 | `reconciliations` + `transactions.status='reconciled'` |
+| F-33 | P1 | `import_batches.source_type IN ('ofx','qif')` |
+| F-34 | P1 | `invoices.content_sha256`, índice lógico de factura, `import_rows.fingerprint`, `transactions.external_id` |
+| F-35 | P1 | `tags`, `transaction_tags` |
+| F-36 | P1 | Consulta 5.5 sobre `vw_movement_lines` |
+| F-37 | P1 | Consulta 5.5 + `ix_transactions_household_id_payee_id_booked_on` |
+| F-38 | P1 | Consulta 6.6 sobre `product_prices` |
+| F-39 | P1 | `products.canonical_name/grouping_key`, `product_aliases`, `pg_trgm` (sección 6) |
+| F-40 | P1 | `extraction_templates` |
+| F-41 | P1 | `accounts.type='loan'` + `loan_terms` |
+| F-42 | P1 | Índices de 2.11 + `saved_views` |
+| F-43 | P1 | `data_exports` |
+| F-44 | P1 | `transactions.notes` |
+| F-45 | P1 | `digest_runs` |
+| F-46 | P1 | Sin implicación en el modelo |
+| F-47 | P1 | `recurring_occurrences.status='pending'` + `vw_account_balances` |
+| F-48 | P1 | Consulta 5.5 + `households.unusual_expense_sigma` + `alerts.unusual_expense` |
+| F-49 | P1 | `recurring_rules.lead_days`, `recurring_occurrences.reminded_at` |
+| F-50 | P1 | `category_templates` + `users.onboarded_at` (copia en 8.6) |
+| F-51 | P2 | `invoices.source='email'`: preparado, sin migración |
+| F-52 | P2 | `currency` en cuentas, transacciones, facturas y precios; falta tabla de tipos de cambio |
+| F-53 | P2 | Derivable de `vw_movement_lines` sin cambios |
+| F-54 | P2 | Derivable de `recurring_occurrences` + saldos |
+| F-55 | P2 | Derivable de `budget_allocations` + `goals` |
+| F-56 | P2 | Derivable de `vw_movement_lines` |
+| F-57 | P2 | `households`, `household_members.role`: **operativo sin migración** |
+| F-58 | P2 | Sin implicación en el modelo |
+| F-59 | P2 | `categorization_rules.text_form` |
+| F-60 | P2 | Consulta 6.6 + `products.is_basket_item` |
+
+**Único hueco conocido:** F-52 (multidivisa) necesitaría una tabla `exchange_rates`
+(`currency_from`, `currency_to`, `rate_on`, `rate`) y una columna de importe convertido en
+`transactions`. Las columnas `currency` ya están en su sitio, así que el cambio sería aditivo.
+Es P2 y se deja fuera a propósito.
+
+---
+
+## 11. Pendientes derivados de este documento
+
+1. Añadir `UnitPrice`, `Quantity`, `Confidence` y `Score` a `backend/app/db/base.py` (0.2).
+2. Crear `backend/app/models/` con un módulo por bloque y un `__init__.py` que importe todos.
+3. Escribir las cinco revisiones de Alembic de 8.2.
+4. Implementar `RequestScope` y `HouseholdScopedRepository` (7.2), con las dos pruebas de
+   tenencia.
+5. Implementar el servicio de fusión siguiendo 4.7 al pie de la letra, con la batería de
+   pruebas de 4.10.
+6. Implementar el pipeline de emparejamiento de productos de 6.3 sobre
+   `app/services/normalizacion.py`, **sin duplicar el umbral 88 en SQL**.
 
