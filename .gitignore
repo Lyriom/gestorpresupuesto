@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Node / Vue
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.local
+.npm
+.pnpm-store/
+
+# Entorno y secretos
+.env
+.env.*
+!.env.example
+
+# Ficheros subidos por el usuario en desarrollo
+backend/uploads/
+uploads/
+storage/
+
+# Base de datos local
+*.sqlite3
+*.db
+pgdata/
+
+# Editores y sistema
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Logs
+*.log
+logs/
