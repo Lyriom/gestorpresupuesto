@@ -41,6 +41,7 @@ SECRET_KEY=<genera una clave, ver más abajo>
 DATABASE_URL=postgresql+asyncpg://presupuesto:<CONTRASEÑA>@gestor-presupuesto_db:5432/presupuesto
 CORS_ORIGINS=
 COOKIE_SECURE=true
+TRUSTED_PROXIES=*
 UPLOAD_DIR=/data/uploads
 STATIC_DIR=/app/static
 ALLOW_REGISTRATION=true
@@ -51,6 +52,20 @@ DEFAULT_CURRENCY=EUR
 DEFAULT_LOCALE=es-ES
 DEFAULT_TIMEZONE=Europe/Madrid
 ```
+
+**`TRUSTED_PROXIES` no es un detalle.** La aplicación cuenta los intentos de
+acceso por dirección IP, y detrás de un proxy la IP real solo llega en la
+cabecera `X-Forwarded-For`. Esa cabecera la puede escribir cualquiera, así que la
+aplicación únicamente la cree si la conexión viene de un proxy declarado aquí:
+
+- Si la dejas **vacía**, el límite de intentos contará todas las peticiones como
+  si vinieran de la misma IP (la del proxy de EasyPanel), y un solo visitante
+  podría agotar el cupo de los demás.
+- Si pones `*`, se acepta la cabecera de cualquier par. Es lo correcto en
+  EasyPanel **siempre que el contenedor no publique el puerto 8000 hacia
+  internet** y solo se llegue a él a través del proxy. No publiques ese puerto.
+- Si prefieres ser estricto, pon la dirección del contenedor del proxy en la red
+  interna del proyecto en lugar de `*`.
 
 Genera la clave de firma con:
 

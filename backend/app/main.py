@@ -63,6 +63,38 @@ if settings.cors_origins:
     )
 
 
+# Política de contenido. El frontend se sirve del mismo origen y no carga nada de
+# fuera, así que todo puede quedarse en `self`. Se permite `data:` en imágenes por
+# los iconos incrustados, y `unsafe-inline` en estilos porque Vue aplica estilos
+# calculados en línea; los scripts NO lo llevan, que es lo que de verdad frena un
+# XSS. `frame-ancestors 'none'` es la versión moderna de X-Frame-Options.
+CSP = (
+    "default-src 'self'; "
+    "script-src 'self'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob:; "
+    "font-src 'self' data:; "
+    "connect-src 'self'; "
+    "object-src 'none'; "
+    "base-uri 'none'; "
+    "form-action 'self'; "
+    "frame-ancestors 'none'"
+)
+
+# La documentación interactiva de la API carga Swagger UI de un CDN, así que con
+# la política general no funcionaría. Se le da la suya, más laxa pero acotada a
+# esas dos rutas, en lugar de abrir la de toda la aplicación.
+CSP_DOCUMENTACION = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "img-src 'self' data: https://fastapi.tiangolo.com; "
+    "worker-src 'self' blob:"
+)
+
+RUTAS_DE_DOCUMENTACION = frozenset({"/api/docs", "/api/openapi.json"})
+
+
 @app.middleware("http")
 async def cabeceras_de_seguridad(peticion: Request, siguiente) -> Response:  # noqa: ANN001
     """Cabeceras de endurecimiento en todas las respuestas."""
@@ -71,6 +103,9 @@ async def cabeceras_de_seguridad(peticion: Request, siguiente) -> Response:  # n
     respuesta.headers["X-Frame-Options"] = "DENY"
     respuesta.headers["Referrer-Policy"] = "same-origin"
     respuesta.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    respuesta.headers["Content-Security-Policy"] = (
+        CSP_DOCUMENTACION if peticion.url.path in RUTAS_DE_DOCUMENTACION else CSP
+    )
     if settings.is_production:
         respuesta.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return respuesta
