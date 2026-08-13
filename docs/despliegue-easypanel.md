@@ -1,0 +1,144 @@
+# Despliegue en EasyPanel
+
+La aplicación es un monolito: una sola imagen Docker sirve la API y el frontend.
+Necesitas dos servicios en EasyPanel: **PostgreSQL** y **App**.
+
+## 1. Crear el proyecto
+
+En EasyPanel, `+ Project` → nombre `gestor-presupuesto`.
+
+## 2. Servicio de base de datos
+
+Dentro del proyecto, `+ Service` → **Postgres**.
+
+| Campo | Valor |
+| --- | --- |
+| Service Name | `db` |
+| Image | `postgres:16` |
+| Database | `presupuesto` |
+| User | `presupuesto` |
+| Password | genera una larga y guárdala |
+
+Despliega el servicio. EasyPanel lo expone dentro de la red del proyecto con el
+host `$(PROJECT_NAME)_db`, es decir `gestor-presupuesto_db`. **No** publiques el
+puerto 5432 hacia fuera: la app se conecta por la red interna.
+
+## 3. Servicio de aplicación
+
+`+ Service` → **App**.
+
+**Source**: GitHub, repositorio `Lyriom/gestorpresupuesto`, rama `main`.
+Si el repositorio es privado, conecta antes tu cuenta de GitHub en los ajustes
+de EasyPanel.
+
+**Build**: método `Dockerfile`, ruta `Dockerfile` (está en la raíz del repo).
+
+**Environment**: pega estas variables y ajusta los valores marcados.
+
+```env
+APP_ENV=production
+SECRET_KEY=<genera una clave, ver más abajo>
+DATABASE_URL=postgresql+asyncpg://presupuesto:<CONTRASEÑA>@gestor-presupuesto_db:5432/presupuesto
+CORS_ORIGINS=
+COOKIE_SECURE=true
+UPLOAD_DIR=/data/uploads
+STATIC_DIR=/app/static
+ALLOW_REGISTRATION=true
+OCR_ENABLED=true
+OCR_LANGUAGES=spa+eng
+MAX_UPLOAD_MB=20
+DEFAULT_CURRENCY=EUR
+DEFAULT_LOCALE=es-ES
+DEFAULT_TIMEZONE=Europe/Madrid
+```
+
+Genera la clave de firma con:
+
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(64))"
+```
+
+`CORS_ORIGINS` va vacío a propósito: el frontend se sirve desde el mismo
+dominio, así que no hay petición cruzada. `COOKIE_SECURE=true` es obligatorio en
+producción, porque las cookies de sesión no deben viajar por HTTP.
+
+**Ten en cuenta**: cuando termines de crear tu usuario, pon
+`ALLOW_REGISTRATION=false` y redespliega. Si no, cualquiera que encuentre la URL
+puede registrarse.
+
+## 4. Volumen para las facturas
+
+Pestaña **Mounts** → `+ Volume`:
+
+| Campo | Valor |
+| --- | --- |
+| Type | Volume |
+| Name | `datos` |
+| Mount Path | `/data` |
+
+Sin este volumen, las facturas subidas desaparecen en cada despliegue.
+
+## 5. Dominio y HTTPS
+
+Pestaña **Domains** → añade tu dominio (por ejemplo `presupuesto.gozsyl.cloud`),
+`Port` **8000**, y activa **HTTPS** con Let's Encrypt. EasyPanel gestiona el
+certificado y termina el TLS en su proxy; la aplicación arranca con
+`--proxy-headers` para leer bien la IP y el esquema originales.
+
+## 6. Desplegar
+
+Pulsa **Deploy**. En el primer arranque el contenedor:
+
+1. Espera a que PostgreSQL acepte conexiones (reintenta 30 veces cada 2 s).
+2. Aplica las migraciones de Alembic (`alembic upgrade head`).
+3. Arranca Uvicorn en el puerto 8000.
+
+Comprueba que responde:
+
+```bash
+curl -fsS https://presupuesto.gozsyl.cloud/api/health
+# {"estado":"ok","app":"Gestor de Presupuesto","entorno":"production"}
+```
+
+Después entra por el navegador y crea tu cuenta.
+
+## 7. Despliegues siguientes
+
+Con el repositorio conectado, cada `git push` a `main` puede disparar el build
+si activas **Auto Deploy** (o configuras el webhook que te da EasyPanel en la
+pestaña de despliegue). Las migraciones se aplican solas en cada arranque.
+
+## Copias de seguridad
+
+El servicio de Postgres de EasyPanel tiene backups programados en su propia
+pestaña; actívalos. Para una copia manual:
+
+```bash
+# Desde la consola del servicio db
+pg_dump -U presupuesto presupuesto | gzip > /tmp/presupuesto-$(date +%F).sql.gz
+```
+
+Los ficheros de las facturas viven en el volumen `/data`, así que respáldalos
+también: un backup de la base de datos sin los PDF deja las facturas sin
+documento original.
+
+Además, la propia aplicación permite exportar todos tus datos en JSON desde
+**Ajustes → Datos → Exportar**, que sirve como copia independiente del motor.
+
+## Solución de problemas
+
+| Síntoma | Causa probable |
+| --- | --- |
+| El contenedor reinicia en bucle y los logs muestran fallos de migración | `DATABASE_URL` mal formada o el servicio `db` todavía no está listo. Revisa el host: es `<proyecto>_db`, no `localhost` |
+| Entras, recargas y te echa fuera | Falta `COOKIE_SECURE=true` con HTTPS, o `SECRET_KEY` cambia entre despliegues (defínela como variable fija, no generada) |
+| Las facturas escaneadas no extraen nada | `OCR_ENABLED=false`, o el PDF es una imagen de baja resolución. Tesseract y el diccionario español ya vienen en la imagen |
+| Error 413 al subir una factura | Supera `MAX_UPLOAD_MB`; súbelo y redespliega |
+| Las facturas desaparecen tras desplegar | Falta el volumen montado en `/data` |
+| La web carga pero la API da 404 | El build no copió los estáticos: revisa que el build use el `Dockerfile` de la raíz |
+
+## Consumo aproximado
+
+Con un usuario y unos cientos de transacciones al mes, la aplicación va sobrada
+con 512 MB de RAM y 0,5 vCPU. El pico de memoria es la extracción de un PDF
+grande con OCR, que puede llegar a ~400 MB puntuales; si subes facturas
+escaneadas de muchas páginas, asigna 1 GB.
