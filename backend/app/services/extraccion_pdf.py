@@ -100,9 +100,13 @@ class LineaExtraida:
                 self.confianza = min(self.confianza, 0.35)
 
     def normalizar(self) -> None:
+        """Calcula la forma canónica de la descripción.
+
+        La unidad de la línea NO se rellena con el tamaño del producto: en
+        "6 x LECHE PASCUAL 1L" la cantidad son 6 briks, no 6 litros. El tamaño
+        se queda en `normalizada.tamanyo_*`, que es su sitio.
+        """
         self.normalizada = normalizar_descripcion(self.descripcion)
-        if self.unidad is None and self.normalizada.tamanyo_unidad:
-            self.unidad = self.normalizada.tamanyo_unidad
 
 
 @dataclass(slots=True)
@@ -227,6 +231,18 @@ def _sin_tildes_min(texto: str) -> str:
     return sin_acentos(texto).lower()
 
 
+def _posicion_etiqueta(texto_plano: str, etiqueta: str) -> int:
+    """Posición de la etiqueta como palabra completa, o -1 si no aparece.
+
+    Buscar por subcadena da falsos positivos caros: la etiqueta "iva" aparece
+    dentro de "ACEITE OLIVA VIRGEN EXTRA", y se acababa tomando el importe de
+    esa línea como la cuota de IVA de la factura.
+    """
+    patron = rf"(?<![a-z0-9]){re.escape(etiqueta)}(?![a-z])"
+    coincidencia = re.search(patron, texto_plano)
+    return coincidencia.start() if coincidencia else -1
+
+
 def _buscar_importe_etiquetado(lineas: list[str], etiquetas: tuple[str, ...]) -> Decimal | None:
     """Busca el importe que acompaña a una de las etiquetas dadas.
 
@@ -236,7 +252,7 @@ def _buscar_importe_etiquetado(lineas: list[str], etiquetas: tuple[str, ...]) ->
     for etiqueta in etiquetas:
         for indice, linea in enumerate(lineas):
             plana = _sin_tildes_min(linea)
-            posicion = plana.find(etiqueta)
+            posicion = _posicion_etiqueta(plana, etiqueta)
             if posicion < 0:
                 continue
             # Primero se busca el importe en el resto de la misma línea.

@@ -82,7 +82,9 @@ class DescripcionNormalizada:
     def tamanyo_texto(self) -> str | None:
         if self.tamanyo_valor is None or not self.tamanyo_unidad:
             return None
-        valor = self.tamanyo_valor.normalize()
+        # `normalize()` deja 250 como "2.5E+2", y ese texto acaba dentro de la
+        # clave de agrupación del producto: se fuerza notación posicional.
+        valor = format(self.tamanyo_valor.normalize(), "f")
         return f"{valor} {self.tamanyo_unidad}"
 
 
