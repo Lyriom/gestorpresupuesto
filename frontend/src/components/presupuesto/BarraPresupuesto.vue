@@ -23,16 +23,11 @@ import { ArrowLeft, CircleAlert, Table2, TriangleAlert } from 'lucide-vue-next'
 import { aNumero, euros, etiquetaPeriodo, periodoDe, porcentaje } from '@/lib/formato'
 import BarraCategoria from './BarraCategoria.vue'
 import { COLOR_OTROS, colorDeCategoria } from './colores'
-import type {
-  BarraPresupuesto as DatosBarra,
-  CifrasMes,
-  SegmentoBarra,
-  TramoBarra,
-} from './types'
+import type { AsignacionTematica, CifrasMes, PresupuestoMes, TramoBarra } from './types'
 
 const props = withDefaults(
   defineProps<{
-    barra: DatosBarra | null
+    barra: PresupuestoMes | null
     cargando?: boolean
     /** Día del mes para la marca de ritmo. Si no se pasa, se deduce del periodo. */
     diaActual?: number
@@ -57,10 +52,10 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  /** Clic o Enter en un segmento: llevar a Transacciones con el filtro puesto. */
-  activar: [segmento: SegmentoBarra]
+  /** Clic o Enter en un segmento: llevar a Movimientos con el filtro puesto. */
+  activar: [asignacion: AsignacionTematica]
   /** Espacio en un segmento, o «Reasignar» en un aviso. */
-  reasignar: [segmento: SegmentoBarra | null]
+  reasignar: [asignacion: AsignacionTematica | null]
   repartir: []
   copiarMesAnterior: []
   ponerIngresos: []
@@ -78,22 +73,30 @@ const esMovil = useMediaQuery('(max-width: 639px)')
  * Cifras
  * ------------------------------------------------------------------ */
 
-const segmentos = computed(() => props.barra?.segmentos ?? [])
+const asignaciones = computed(() => props.barra?.allocations ?? [])
 
 const cifras = computed<CifrasMes>(() => {
   const b = props.barra
+  const ingresos = aNumero(b?.income)
+  const asignado = aNumero(b?.allocated_total)
+  const gastado = aNumero(b?.spent_total)
+  const arrastrado = aNumero(b?.rollover_in_total)
+  const sinAsignar = aNumero(b?.unassigned)
+  // El esquema no publica el disponible global ni los porcentajes: son cuentas
+  // de presentación, así que se derivan aquí y no se piden al servidor.
+  const base = Math.max(ingresos, asignado)
   return {
-    ingresos: aNumero(b?.ingresos),
-    asignado: aNumero(b?.total_asignado),
-    gastado: aNumero(b?.total_gastado),
-    arrastrado: aNumero(b?.total_arrastrado),
-    sinAsignar: aNumero(b?.sin_asignar),
-    disponible: aNumero(b?.disponible),
-    porcentajeAsignado: aNumero(b?.porcentaje_asignado),
-    porcentajeGastado: aNumero(b?.porcentaje_gastado),
-    sobreasignado: aNumero(b?.sin_asignar) < 0,
-    enRojo: aNumero(b?.total_gastado) > aNumero(b?.ingresos) && aNumero(b?.ingresos) > 0,
-    sobrepasadas: segmentos.value.filter((s) => s.estado === 'sobrepasado'),
+    ingresos,
+    asignado,
+    gastado,
+    arrastrado,
+    sinAsignar,
+    disponible: ingresos + arrastrado - gastado,
+    porcentajeAsignado: ingresos > 0 ? (asignado / ingresos) * 100 : 0,
+    porcentajeGastado: base > 0 ? (gastado / base) * 100 : 0,
+    sobreasignado: sinAsignar < 0,
+    enRojo: gastado > ingresos && ingresos > 0,
+    sobrepasadas: asignaciones.value.filter((a) => a.state === 'sobrepasado'),
   }
 })
 
@@ -111,32 +114,32 @@ const sinRepartir = computed(() => !sinIngresos.value && cifras.value.asignado <
  * Plegado en «Otros» (§6.4 F), determinista
  * ------------------------------------------------------------------ */
 
-function porAsignado(a: SegmentoBarra, b: SegmentoBarra): number {
-  const dif = aNumero(b.asignado) - aNumero(a.asignado)
-  return dif !== 0 ? dif : a.nombre.localeCompare(b.nombre, 'es')
+function porAsignado(a: AsignacionTematica, b: AsignacionTematica): number {
+  const dif = aNumero(b.allocated) - aNumero(a.allocated)
+  return dif !== 0 ? dif : a.category.name.localeCompare(b.category.name, 'es')
 }
 
 const plegado = computed(() => {
-  const ordenados = [...segmentos.value].sort(porAsignado)
-  if (props.anidada) return { visibles: ordenados, otros: [] as SegmentoBarra[] }
+  const ordenados = [...asignaciones.value].sort(porAsignado)
+  if (props.anidada) return { visibles: ordenados, otros: [] as AsignacionTematica[] }
 
   const total = escala.value.total || 1
-  const anchoDe = (s: SegmentoBarra) => (aNumero(s.asignado) / total) * 100
+  const anchoDe = (a: AsignacionTematica) => (aNumero(a.allocated) / total) * 100
 
   // Una temática sobrepasada nunca se plega, aunque sea diminuta: si tiene
   // exceso, tiene sitio propio. Es la excepción explícita al mínimo del 3 %.
-  const fijos = ordenados.filter((s) => s.estado === 'sobrepasado')
-  const candidatos = ordenados.filter((s) => s.estado !== 'sobrepasado')
-  const otros: SegmentoBarra[] = []
+  const fijos = ordenados.filter((a) => a.state === 'sobrepasado')
+  const candidatos = ordenados.filter((a) => a.state !== 'sobrepasado')
+  const otros: AsignacionTematica[] = []
 
   const sobran = () => fijos.length + candidatos.length > props.maxSegmentos
-  const hayMinusculos = () => candidatos.some((s) => anchoDe(s) < MINIMO_VISIBLE_PCT)
+  const hayMinusculos = () => candidatos.some((a) => anchoDe(a) < MINIMO_VISIBLE_PCT)
   while (candidatos.length > 0 && (sobran() || hayMinusculos())) {
-    otros.push(candidatos.pop() as SegmentoBarra)
+    otros.push(candidatos.pop() as AsignacionTematica)
   }
 
   // «Otros (1)» no agrega nada y esconde un nombre: mejor dejarlo a la vista.
-  if (otros.length === 1) candidatos.push(otros.pop() as SegmentoBarra)
+  if (otros.length === 1) candidatos.push(otros.pop() as AsignacionTematica)
 
   return { visibles: [...fijos, ...candidatos].sort(porAsignado), otros }
 })
@@ -145,44 +148,45 @@ const plegado = computed(() => {
  * Tramos del carril
  * ------------------------------------------------------------------ */
 
-function tramoDeSegmento(s: SegmentoBarra, total: number): TramoBarra {
-  const asignado = aNumero(s.asignado)
-  const arrastrado = aNumero(s.arrastrado)
+function tramoDeAsignacion(a: AsignacionTematica, total: number): TramoBarra {
+  const asignado = aNumero(a.allocated)
+  const arrastrado = aNumero(a.rollover_in)
   const efectivo = asignado + arrastrado
-  const gastado = aNumero(s.gastado)
-  const sobrepaso = aNumero(s.sobrepaso)
-  const consumidoPct = aNumero(s.porcentaje_consumido)
+  const gastado = aNumero(a.spent)
+  const sobrepaso = aNumero(a.overspent)
+  // `spent_pct` llega como proporción: 1.0 es el presupuesto justo consumido.
+  const consumidoPct = (a.spent_pct ?? 0) * 100
   return {
-    clave: s.categoria_id,
+    clave: a.category_id,
     tipo: 'categoria',
-    nombre: s.nombre,
-    color: colorDeCategoria(s.color, s.categoria_id),
+    nombre: a.category.name,
+    color: colorDeCategoria(a.category.color, a.category_id),
     importe: asignado,
     anchoPct: total > 0 ? (asignado / total) * 100 : 0,
     llenadoPct: efectivo > 0 ? Math.min(gastado / efectivo, 1) * 100 : gastado > 0 ? 100 : 0,
     crestaPct: efectivo > 0 ? Math.min(sobrepaso / efectivo, 1) * 100 : sobrepaso > 0 ? 100 : 0,
     gastado,
-    disponible: aNumero(s.disponible),
+    disponible: aNumero(a.available),
     arrastrado,
     sobrepaso,
     consumidoPct,
-    estado: s.estado,
-    segmentos: [s],
+    estado: a.state,
+    asignaciones: [a],
   }
 }
 
 const tramos = computed<TramoBarra[]>(() => {
   const total = escala.value.total
   if (total <= 0) return []
-  const lista = plegado.value.visibles.map((s) => tramoDeSegmento(s, total))
+  const lista = plegado.value.visibles.map((a) => tramoDeAsignacion(a, total))
 
   const otros = plegado.value.otros
   if (otros.length > 0) {
-    const suma = (campo: (s: SegmentoBarra) => number) =>
-      otros.reduce((acumulado, s) => acumulado + campo(s), 0)
-    const asignado = suma((s) => aNumero(s.asignado))
-    const arrastrado = suma((s) => aNumero(s.arrastrado))
-    const gastado = suma((s) => aNumero(s.gastado))
+    const suma = (campo: (a: AsignacionTematica) => number) =>
+      otros.reduce((acumulado, a) => acumulado + campo(a), 0)
+    const asignado = suma((a) => aNumero(a.allocated))
+    const arrastrado = suma((a) => aNumero(a.rollover_in))
+    const gastado = suma((a) => aNumero(a.spent))
     const efectivo = asignado + arrastrado
     lista.push({
       clave: '__otros',
@@ -199,7 +203,7 @@ const tramos = computed<TramoBarra[]>(() => {
       sobrepaso: 0,
       consumidoPct: efectivo > 0 ? (gastado / efectivo) * 100 : 0,
       estado: null,
-      segmentos: otros,
+      asignaciones: otros,
     })
   }
 
@@ -219,7 +223,7 @@ const tramos = computed<TramoBarra[]>(() => {
       sobrepaso: 0,
       consumidoPct: 0,
       estado: 'sin_asignar',
-      segmentos: [],
+      asignaciones: [],
     })
   }
 
@@ -239,7 +243,7 @@ const tramos = computed<TramoBarra[]>(() => {
       sobrepaso: escala.value.desborde,
       consumidoPct: 100,
       estado: 'sobrepasado',
-      segmentos: [],
+      asignaciones: [],
     })
   }
 
@@ -297,12 +301,19 @@ const limiteIngresos = computed(() => {
  * ------------------------------------------------------------------ */
 
 const ritmo = computed(() => {
-  const periodo = props.barra?.periodo
+  const periodo = props.barra?.period
   if (!periodo) return null
   const esActual = periodo === periodoDe()
   const [anyo, mes] = periodo.split('-').map(Number)
-  const diasDelMes = props.diasDelMes ?? (anyo && mes ? new Date(anyo, mes, 0).getDate() : 30)
-  const diaActual = props.diaActual ?? (esActual ? new Date().getDate() : null)
+  // El payload ya trae el día y los días del mes; los props solo los pisan.
+  const diasDelMes =
+    props.diasDelMes ??
+    props.barra?.days_in_month ??
+    (anyo && mes ? new Date(anyo, mes, 0).getDate() : 30)
+  const diaActual =
+    props.diaActual ??
+    props.barra?.day_of_month ??
+    (esActual ? new Date().getDate() : null)
   if (!diaActual || !diasDelMes) return null
   const dia = Math.min(Math.max(diaActual, 1), diasDelMes)
   return {
@@ -399,7 +410,7 @@ function alTeclado(evento: KeyboardEvent): void {
     case ' ':
     case 'Spacebar':
       evento.preventDefault()
-      emit('reasignar', tramos.value[actual]?.segmentos[0] ?? null)
+      emit('reasignar', tramos.value[actual]?.asignaciones[0] ?? null)
       break
     default:
       break
@@ -418,33 +429,34 @@ function activarTramo(t: TramoBarra | undefined): void {
     emit('repartir')
     return
   }
-  const segmento = t.segmentos[0]
-  if (segmento) emit('activar', segmento)
+  const asignacion = t.asignaciones[0]
+  if (asignacion) emit('activar', asignacion)
 }
 
 /** Barra anidada de «Otros»: los mismos datos, con las temáticas plegadas dentro. */
-const barraOtros = computed<DatosBarra | null>(() => {
+const barraOtros = computed<PresupuestoMes | null>(() => {
   const grupo = plegado.value.otros
-  if (grupo.length === 0 || !props.barra) return null
-  const suma = (campo: (s: SegmentoBarra) => number) =>
-    grupo.reduce((acumulado, s) => acumulado + campo(s), 0)
-  const asignado = suma((s) => aNumero(s.asignado))
-  const gastado = suma((s) => aNumero(s.gastado))
-  const arrastrado = suma((s) => aNumero(s.arrastrado))
+  const base = props.barra
+  if (grupo.length === 0 || !base) return null
+  const suma = (campo: (a: AsignacionTematica) => number) =>
+    grupo.reduce((acumulado, a) => acumulado + campo(a), 0)
+  const asignado = suma((a) => aNumero(a.allocated))
+  const gastado = suma((a) => aNumero(a.spent))
+  const arrastrado = suma((a) => aNumero(a.rollover_in))
   return {
-    periodo: props.barra.periodo,
+    ...base,
     // Dentro del grupo el 100 % es lo que el grupo tiene asignado: no hay más
     // ingresos que repartir en este nivel.
-    ingresos: asignado.toFixed(2),
-    total_asignado: asignado.toFixed(2),
-    total_gastado: gastado.toFixed(2),
-    total_arrastrado: arrastrado.toFixed(2),
-    sin_asignar: '0.00',
-    disponible: (asignado + arrastrado - gastado).toFixed(2),
-    porcentaje_asignado: '100.00',
-    porcentaje_gastado: (asignado > 0 ? (gastado / asignado) * 100 : 0).toFixed(2),
-    segmentos: grupo,
-    avisos: [],
+    income: asignado.toFixed(2),
+    income_actual: asignado.toFixed(2),
+    planned_income: null,
+    allocated_total: asignado.toFixed(2),
+    spent_total: gastado.toFixed(2),
+    rollover_in_total: arrastrado.toFixed(2),
+    unassigned: '0.00',
+    overallocated: '0.00',
+    allocations: grupo,
+    warnings: [],
   }
 })
 
@@ -453,7 +465,7 @@ const barraOtros = computed<DatosBarra | null>(() => {
  * ------------------------------------------------------------------ */
 
 const nombreMes = computed(() =>
-  props.barra ? etiquetaPeriodo(props.barra.periodo) : etiquetaPeriodo(periodoDe()),
+  props.barra ? etiquetaPeriodo(props.barra.period) : etiquetaPeriodo(periodoDe()),
 )
 
 const titulo = computed(() => {
@@ -479,7 +491,7 @@ function etiquetaTramo(t: TramoBarra | undefined, i: number): string {
   const efectivo = t.importe + t.arrastrado
   const base = `${t.nombre}: ${euros(t.gastado)} gastados de ${euros(efectivo)} asignados, ${porcentaje(t.consumidoPct / 100)} de lo asignado, ${delTotal}`
   const exceso = t.sobrepaso > 0 ? `, sobrepasada en ${euros(t.sobrepaso)}` : ''
-  const grupo = t.tipo === 'otros' ? `, agrupa ${t.segmentos.length} temáticas` : ''
+  const grupo = t.tipo === 'otros' ? `, agrupa ${t.asignaciones.length} temáticas` : ''
   return `${base}${exceso}${grupo}, ${posicionTexto}.`
 }
 
@@ -507,7 +519,7 @@ const excesosVisibles = computed(() =>
 )
 
 const totalSobrepasado = computed(() =>
-  cifras.value.sobrepasadas.reduce((total, s) => total + aNumero(s.sobrepaso), 0),
+  cifras.value.sobrepasadas.reduce((total, a) => total + aNumero(a.overspent), 0),
 )
 
 /* ------------------------------------------------------------------ *
@@ -544,6 +556,9 @@ function cabeEtiqueta(t: TramoBarra): boolean {
 }
 
 const tablaAbierta = ref(false)
+
+/** Sin cabecera no hay <h2> que etiquete la sección: se usa `aria-label`. */
+const hayCabecera = computed(() => props.mostrarCabecera && !props.anidada)
 </script>
 
 <template>
@@ -553,7 +568,8 @@ const tablaAbierta = ref(false)
       'tarjeta--rojo': cifras.enRojo,
       'tarjeta--anidada': props.anidada,
     }"
-    :aria-labelledby="`${id}-titulo`"
+    :aria-labelledby="hayCabecera ? `${id}-titulo` : undefined"
+    :aria-label="hayCabecera ? undefined : titulo"
   >
     <!-- Cargando: un solo bloque a la altura real del carril. Inventar segmentos
          falsos que luego cambian produce un salto desagradable. -->
@@ -566,7 +582,7 @@ const tablaAbierta = ref(false)
     </template>
 
     <template v-else>
-      <header v-if="props.mostrarCabecera && !props.anidada" class="cabecera">
+      <header v-if="hayCabecera" class="cabecera">
         <div>
           <h2 :id="`${id}-titulo`" class="titulo">{{ titulo }}</h2>
           <p class="cifra-heroe">{{ euros(cifras.ingresos) }}</p>
@@ -636,7 +652,7 @@ const tablaAbierta = ref(false)
             ref="pista"
             role="group"
             :aria-label="`Reparto por temáticas de ${nombreMes}`"
-            :aria-describedby="props.mostrarCabecera && !props.anidada ? `${id}-resumen` : undefined"
+            :aria-describedby="hayCabecera ? `${id}-resumen` : undefined"
             @keydown="alTeclado"
             @mouseleave="salir"
           >
@@ -812,8 +828,8 @@ const tablaAbierta = ref(false)
             <p v-if="cifras.sobrepasadas.length === 1" class="aviso aviso--negativo">
               <TriangleAlert :size="16" aria-hidden="true" />
               <span>
-                {{ cifras.sobrepasadas[0].nombre }} sobrepasada en
-                {{ euros(cifras.sobrepasadas[0].sobrepaso) }}
+                {{ cifras.sobrepasadas[0].category.name }} sobrepasada en
+                {{ euros(cifras.sobrepasadas[0].overspent) }}
               </span>
               <span class="aviso-acciones">
                 <button type="button" class="boton-secundario" @click="emit('reasignar', cifras.sobrepasadas[0])">
@@ -858,9 +874,9 @@ const tablaAbierta = ref(false)
           <!-- En móvil la leyenda se sustituye por la lista de barras compactas:
                un chip de 12 px no es un objetivo de toque. -->
           <ul v-if="esMovil && tramos.length > 0" class="lista-compacta">
-            <li v-for="s in plegado.visibles" :key="s.categoria_id">
+            <li v-for="a in plegado.visibles" :key="a.category_id">
               <BarraCategoria
-                :segmento="s"
+                :asignacion="a"
                 :dia-actual="ritmo?.dia"
                 :dias-del-mes="ritmo?.diasDelMes"
                 @activar="emit('activar', $event)"

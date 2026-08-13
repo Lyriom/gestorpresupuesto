@@ -19,7 +19,7 @@ import { euros, periodoDe } from '@/lib/formato'
 import BarraPresupuesto from './BarraPresupuesto.vue'
 import BarraCategoria from './BarraCategoria.vue'
 import ResumenPresupuesto from './ResumenPresupuesto.vue'
-import type { BarraPresupuesto as DatosBarra, EstadoSegmento, SegmentoBarra } from './types'
+import type { AsignacionTematica, EstadoSegmento, PresupuestoMes } from './types'
 import GraficoLineas from '@/components/graficos/GraficoLineas.vue'
 import GraficoBarras from '@/components/graficos/GraficoBarras.vue'
 import GraficoDonut from '@/components/graficos/GraficoDonut.vue'
@@ -47,74 +47,86 @@ function estadoDe(efectivo: number, gastado: number, disponible: number): Estado
   return gastado / efectivo >= 0.8 ? 'ajustado' : 'en_margen'
 }
 
-function crearBarra(ingresos: number, entradas: EntradaDemo[], periodo = PERIODO): DatosBarra {
+function crearBarra(ingresos: number, entradas: EntradaDemo[], periodo = PERIODO): PresupuestoMes {
   const totalAsignado = entradas.reduce((t, e) => t + e.asignado, 0)
   const totalGastado = entradas.reduce((t, e) => t + e.gastado, 0)
   const totalArrastrado = entradas.reduce((t, e) => t + (e.arrastrado ?? 0), 0)
-  const base = Math.max(ingresos, totalAsignado)
 
-  const segmentos: SegmentoBarra[] = entradas.map((e, i) => {
+  const allocations: AsignacionTematica[] = entradas.map((e, i) => {
     const arrastrado = e.arrastrado ?? 0
     const efectivo = e.asignado + arrastrado
     const disponible = efectivo - e.gastado
     return {
-      categoria_id: `cat-${i + 1}-${e.nombre.toLowerCase().replace(/\s+/g, '-')}`,
-      nombre: e.nombre,
-      color: String(e.ranura ?? (i % 12) + 1),
-      icono: null,
-      categoria_padre_id: null,
-      asignado: dos(e.asignado),
-      gastado: dos(e.gastado),
-      arrastrado: dos(arrastrado),
-      disponible: dos(disponible),
-      porcentaje_consumido: dos(efectivo > 0 ? (e.gastado / efectivo) * 100 : 0),
-      porcentaje_de_la_barra: dos(base > 0 ? (e.asignado / base) * 100 : 0),
-      estado: estadoDe(efectivo, e.gastado, disponible),
-      sobrepaso: dos(disponible < 0 ? -disponible : 0),
+      category_id: `cat-${i + 1}-${e.nombre.toLowerCase().replace(/\s+/g, '-')}`,
+      category: {
+        id: `cat-${i + 1}`,
+        name: e.nombre,
+        color: String(e.ranura ?? (i % 12) + 1),
+      },
+      allocated: dos(e.asignado),
+      spent: dos(e.gastado),
+      rollover_in: dos(arrastrado),
+      available: dos(disponible),
+      spent_pct: efectivo > 0 ? e.gastado / efectivo : 0,
+      overspent: dos(disponible < 0 ? -disponible : 0),
+      state: estadoDe(efectivo, e.gastado, disponible),
+      rollover_enabled: arrastrado !== 0,
+      is_locked: false,
+      children: [],
     }
   })
 
-  segmentos.sort((a, b) => Number(b.asignado) - Number(a.asignado) || a.nombre.localeCompare(b.nombre, 'es'))
+  allocations.sort(
+    (a, b) =>
+      Number(b.allocated) - Number(a.allocated) ||
+      a.category.name.localeCompare(b.category.name, 'es'),
+  )
 
   const sinAsignar = ingresos - totalAsignado
-  const avisos: string[] = []
+  const warnings: string[] = []
   if (ingresos === 0) {
-    avisos.push(
+    warnings.push(
       'No has registrado ingresos este mes: añade tu nómina o ingresos para poder repartir el presupuesto.',
     )
   } else if (sinAsignar < 0) {
-    avisos.push(`Has repartido ${euros(-sinAsignar)} más de lo que has ingresado este mes.`)
+    warnings.push(`Has repartido ${euros(-sinAsignar)} más de lo que has ingresado este mes.`)
   }
 
-  const sobrepasadas = segmentos.filter((s) => s.estado === 'sobrepasado')
+  const sobrepasadas = allocations.filter((a) => a.state === 'sobrepasado')
   if (sobrepasadas.length === 1) {
-    avisos.push(`Te has pasado ${euros(sobrepasadas[0].sobrepaso)} en ${sobrepasadas[0].nombre}.`)
+    warnings.push(
+      `Te has pasado ${euros(sobrepasadas[0].overspent)} en ${sobrepasadas[0].category.name}.`,
+    )
   } else if (sobrepasadas.length > 1) {
-    const total = sobrepasadas.reduce((t, s) => t + Number(s.sobrepaso), 0)
-    avisos.push(
+    const total = sobrepasadas.reduce((t, a) => t + Number(a.overspent), 0)
+    warnings.push(
       `Te has pasado del presupuesto en ${sobrepasadas.length} temáticas (${euros(total)} en total).`,
     )
   }
 
-  const sinPresupuesto = segmentos.filter((s) => s.estado === 'sin_asignar')
+  const sinPresupuesto = allocations.filter((a) => a.state === 'sin_asignar')
   if (sinPresupuesto.length > 0) {
-    const nombres = sinPresupuesto.slice(0, 3).map((s) => s.nombre).join(', ')
+    const nombres = sinPresupuesto.slice(0, 3).map((a) => a.category.name).join(', ')
     const resto = sinPresupuesto.length <= 3 ? '' : ` y ${sinPresupuesto.length - 3} más`
-    avisos.push(`Hay gasto sin presupuesto asignado en: ${nombres}${resto}.`)
+    warnings.push(`Hay gasto sin presupuesto asignado en: ${nombres}${resto}.`)
   }
 
   return {
-    periodo,
-    ingresos: dos(ingresos),
-    total_asignado: dos(totalAsignado),
-    total_gastado: dos(totalGastado),
-    total_arrastrado: dos(totalArrastrado),
-    sin_asignar: dos(sinAsignar),
-    disponible: dos(ingresos + totalArrastrado - totalGastado),
-    porcentaje_asignado: dos(ingresos > 0 ? (totalAsignado / ingresos) * 100 : 0),
-    porcentaje_gastado: dos(base > 0 ? (totalGastado / base) * 100 : 0),
-    segmentos,
-    avisos,
+    period: periodo,
+    currency: 'EUR',
+    is_closed: false,
+    income: dos(ingresos),
+    income_actual: dos(ingresos),
+    planned_income: null,
+    allocated_total: dos(totalAsignado),
+    spent_total: dos(totalGastado),
+    rollover_in_total: dos(totalArrastrado),
+    unassigned: dos(sinAsignar),
+    overallocated: dos(Math.max(0, totalAsignado - ingresos)),
+    day_of_month: 13,
+    days_in_month: 31,
+    allocations,
+    warnings,
   }
 }
 
@@ -338,8 +350,8 @@ function registrar(nombre: string, valor: unknown): void {
       <BarraPresupuesto
         :barra="e.barra"
         :cargando="cargando"
-        @activar="registrar('activar', $event.nombre)"
-        @reasignar="registrar('reasignar', $event?.nombre ?? 'todas')"
+        @activar="registrar('activar', $event.category.name)"
+        @reasignar="registrar('reasignar', $event?.category.name ?? 'todas')"
         @repartir="registrar('repartir', null)"
         @copiar-mes-anterior="registrar('copiarMesAnterior', null)"
         @poner-ingresos="registrar('ponerIngresos', null)"
@@ -354,21 +366,21 @@ function registrar(nombre: string, valor: unknown): void {
         hasta un tope visual del 130 %.
       </p>
       <ul class="lista">
-        <li v-for="s in escenarios[7].barra.segmentos" :key="s.categoria_id">
+        <li v-for="a in escenarios[7].barra.allocations" :key="a.category_id">
           <BarraCategoria
-            :segmento="s"
+            :asignacion="a"
             :dia-actual="13"
             :dias-del-mes="31"
-            @activar="registrar('fila activar', $event.nombre)"
-            @asignar="registrar('fila asignar', $event.nombre)"
+            @activar="registrar('fila activar', $event.category.name)"
+            @asignar="registrar('fila asignar', $event.category.name)"
           />
         </li>
-        <li v-for="s in escenarios[10].barra.segmentos" :key="`sin-${s.categoria_id}`">
+        <li v-for="a in escenarios[10].barra.allocations" :key="`sin-${a.category_id}`">
           <BarraCategoria
-            :segmento="s"
+            :asignacion="a"
             :dia-actual="13"
             :dias-del-mes="31"
-            @asignar="registrar('fila asignar', $event.nombre)"
+            @asignar="registrar('fila asignar', $event.category.name)"
           />
         </li>
       </ul>

@@ -1,30 +1,31 @@
 /**
  * Tipos de la barra de presupuesto y del análisis de precios.
  *
- * Reflejan literalmente lo que devuelve el backend
- * (`app/services/presupuesto.py` y `app/services/precios.py`), incluido el
- * detalle de que los importes viajan como cadena decimal para no perder
- * céntimos al serializar. Nada en la interfaz debe operar con ellos
- * directamente: primero pasan por `aNumero()`.
+ * **Los nombres de campo son los del esquema Pydantic**, en inglés: son los que
+ * viajan por el cable. `backend/app/schemas/presupuesto.py` es la fuente de
+ * verdad (`PresupuestoRespuesta` y `AsignacionRespuesta`), no los nombres en
+ * castellano de `app/services/presupuesto.py`, que son internos del servidor.
  *
- * OJO con la capa de esquemas: `app/schemas/presupuesto.py` publica los mismos
- * datos con nombres en inglés (`period`, `income`, `allocated_total`,
- * `allocations`, `allocated`, `spent`, `overspent`, `state`, `warnings`) y el
- * consumo como proporción (`spent_pct`, 1.0 = justo consumido) en vez de 0-100.
- * Estos tipos siguen al servicio; si la API se sirve con los nombres del
- * esquema, la traducción va en la capa de cliente (`lib/api.ts` o una store),
- * no dentro de los componentes.
+ * Dos detalles del contrato que se notan aquí:
+ *
+ * - Los importes viajan como **cadena decimal** (`"1234.56"`) para no perder
+ *   céntimos al serializar. Nada en la interfaz opera con ellos directamente:
+ *   primero pasan por `aNumero()`.
+ * - `spent_pct` es una **proporción** (`1.0` = presupuesto justo consumido), no
+ *   un 0-100. Los componentes lo multiplican por 100 al pintar.
+ *
+ * Lo que el esquema no publica y la interfaz necesita (el disponible global, el
+ * porcentaje asignado, la geometría de los tramos) se deriva en el componente:
+ * son cuentas de presentación, no lógica de negocio duplicada.
  */
 
 /** Importe monetario serializado por el backend: `"1234.56"`. */
 export type Importe = string
 
-/** Porcentaje de 0 a 100 (puede pasar de 100 en un sobrepaso), como cadena decimal. */
-export type PorcentajeApi = string
-
 /** Periodo mensual en formato `AAAA-MM`. */
 export type Periodo = string
 
+/** `EstadoSegmento` de `app/services/presupuesto.py`, tal cual llega en `state`. */
 export type EstadoSegmento =
   | 'sin_gasto'
   | 'en_margen'
@@ -33,44 +34,59 @@ export type EstadoSegmento =
   | 'sobrepasado'
   | 'sin_asignar'
 
-/** Una temática ya calculada, lista para dibujar. */
-export interface SegmentoBarra {
-  categoria_id: string
-  nombre: string
-  /** Ranura de la paleta, hex, o token CSS. Ver `colores.ts`. */
-  color: string | null
-  icono: string | null
-  categoria_padre_id: string | null
-  asignado: Importe
-  gastado: Importe
-  arrastrado: Importe
-  /** `asignado + arrastrado - gastado`; negativo si hay sobrepaso. */
-  disponible: Importe
-  /** Sobre lo asignado más lo arrastrado. */
-  porcentaje_consumido: PorcentajeApi
-  /** Anchura del segmento sobre el total de la barra. */
-  porcentaje_de_la_barra: PorcentajeApi
-  estado: EstadoSegmento
-  /** Cuánto se ha pasado de lo asignado. Cero si no se ha pasado. */
-  sobrepaso: Importe
+/** `CategoriaRefRespuesta`: lo justo para pintar un chip. */
+export interface CategoriaRef {
+  id: string
+  name: string
+  color?: string | null
 }
 
-/** Todo lo que la pantalla principal necesita para dibujar el mes. */
-export interface BarraPresupuesto {
-  periodo: Periodo
-  ingresos: Importe
-  total_asignado: Importe
-  total_gastado: Importe
-  total_arrastrado: Importe
-  /** Ingresos menos lo asignado. Negativo si se ha repartido más de lo que entra. */
-  sin_asignar: Importe
-  /** Ingresos más arrastres menos gastado. */
-  disponible: Importe
-  porcentaje_asignado: PorcentajeApi
-  porcentaje_gastado: PorcentajeApi
-  segmentos: SegmentoBarra[]
+/** `AsignacionRespuesta`: una temática del periodo, ya calculada por el backend. */
+export interface AsignacionTematica {
+  category_id: string
+  category: CategoriaRef
+  allocated: Importe
+  /** Sobrante (o exceso) que entra del periodo anterior. */
+  rollover_in: Importe
+  /** `allocated + rollover_in − spent`. */
+  available: Importe
+  spent: Importe
+  /** Proporción sobre lo asignado más lo arrastrado. `1.0` = justo consumido. */
+  spent_pct: number
+  /** `max(0, spent − allocated − rollover_in)`. Nunca negativo. */
+  overspent: Importe
+  state: EstadoSegmento
+  rollover_enabled: boolean
+  /** No reasignable arrastrando en la barra (hipoteca, seguros). */
+  is_locked: boolean
+  note?: string | null
+  children?: AsignacionTematica[]
+}
+
+/** `PresupuestoRespuesta`: el payload completo del mes. */
+export interface PresupuestoMes {
+  period: Periodo
+  currency: string
+  is_closed: boolean
+  closed_at?: string | null
+  /** Suma de ingresos reales del periodo. */
+  income_actual: Importe
+  planned_income?: Importe | null
+  /** El 100 % del carril: `planned_income` si existe, si no `income_actual`. */
+  income: Importe
+  allocated_total: Importe
+  spent_total: Importe
+  /** `income − allocated_total`. Puede ser negativo. */
+  unassigned: Importe
+  /** `max(0, allocated_total − income)`. */
+  overallocated: Importe
+  rollover_in_total: Importe
+  day_of_month: number
+  days_in_month: number
+  allocations: AsignacionTematica[]
   /** Ya vienen redactados en español desde el backend. */
-  avisos: string[]
+  warnings: string[]
+  note?: string | null
 }
 
 export const ETIQUETA_ESTADO: Record<EstadoSegmento, string> = {
@@ -112,11 +128,11 @@ export interface TramoBarra {
   disponible: number
   arrastrado: number
   sobrepaso: number
-  /** Consumido sobre lo asignado más lo arrastrado; puede pasar de 100. */
+  /** Consumido sobre lo asignado más lo arrastrado, 0–100; puede pasar de 100. */
   consumidoPct: number
   estado: EstadoSegmento | null
   /** Una temática en `categoria`, las plegadas en `otros`, ninguna en los sintéticos. */
-  segmentos: SegmentoBarra[]
+  asignaciones: AsignacionTematica[]
 }
 
 /** Cifras del mes ya convertidas a número, para no repetir `aNumero()` en cada plantilla. */
@@ -126,58 +142,24 @@ export interface CifrasMes {
   gastado: number
   arrastrado: number
   sinAsignar: number
+  /** Derivado: `income + rollover_in_total − spent_total`. */
   disponible: number
+  /** 0–100. Derivado de `allocated_total / income`. */
   porcentajeAsignado: number
+  /** 0–100. Derivado de `spent_total / max(income, allocated_total)`. */
   porcentajeGastado: number
   /** Se ha repartido más de lo que entra. */
   sobreasignado: boolean
   /** Se ha gastado más de lo que entra. */
   enRojo: boolean
-  sobrepasadas: SegmentoBarra[]
+  sobrepasadas: AsignacionTematica[]
 }
 
 export type ClaveCifra = 'ingresos' | 'asignado' | 'gastado' | 'disponible' | 'sinAsignar'
 
 /* ------------------------------------------------------------------ *
- * Precios (app/services/precios.py)
+ * Precios (app/schemas/producto.py)
  * ------------------------------------------------------------------ */
 
+/** `Tendencia` de `app/services/precios.py`. */
 export type Tendencia = 'sube' | 'baja' | 'estable' | 'sin_datos'
-
-/** Un precio unitario observado en una factura. */
-export interface PuntoPrecio {
-  fecha: string
-  precio: Importe
-  comercio: string | null
-  factura_id: string | null
-  cantidad: Importe | null
-}
-
-/** Último precio conocido de un producto en un comercio. */
-export interface ComparativaComercio {
-  comercio: string
-  precio: Importe
-  fecha: string
-  observaciones: number
-}
-
-export interface AnalisisPrecio {
-  observaciones: number
-  precio_actual: Importe | null
-  precio_anterior: Importe | null
-  fecha_actual: string | null
-  /** Proporción, no porcentaje: `0.08` es un +8 %. */
-  variacion_ultima: Importe | null
-  variacion_total: Importe | null
-  precio_minimo: Importe | null
-  precio_maximo: Importe | null
-  precio_medio: Importe | null
-  fecha_minimo: string | null
-  fecha_maximo: string | null
-  tendencia: Tendencia
-  hay_alerta: boolean
-  mensaje_alerta: string | null
-  por_comercio: ComparativaComercio[]
-  comercio_mas_barato: string | null
-  ahorro_por_unidad: Importe | null
-}

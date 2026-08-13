@@ -16,11 +16,11 @@ import { CirclePlus, TriangleAlert } from 'lucide-vue-next'
 
 import { aNumero, euros, porcentaje } from '@/lib/formato'
 import { colorDeCategoria } from './colores'
-import { ETIQUETA_ESTADO, type SegmentoBarra } from './types'
+import { ETIQUETA_ESTADO, type AsignacionTematica } from './types'
 
 const props = withDefaults(
   defineProps<{
-    segmento: SegmentoBarra
+    asignacion: AsignacionTematica
     /** Si se pasa, la fila es un enlace; si no, un botón que emite `activar`. */
     href?: string
     diaActual?: number
@@ -32,22 +32,26 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  activar: [segmento: SegmentoBarra]
-  asignar: [segmento: SegmentoBarra]
+  activar: [asignacion: AsignacionTematica]
+  asignar: [asignacion: AsignacionTematica]
 }>()
 
 const TOPE_VISUAL = 130
 
-const color = computed(() => colorDeCategoria(props.segmento.color, props.segmento.categoria_id))
-const asignado = computed(() => aNumero(props.segmento.asignado))
-const arrastrado = computed(() => aNumero(props.segmento.arrastrado))
+const nombre = computed(() => props.asignacion.category.name)
+const color = computed(() =>
+  colorDeCategoria(props.asignacion.category.color, props.asignacion.category_id),
+)
+const asignado = computed(() => aNumero(props.asignacion.allocated))
+const arrastrado = computed(() => aNumero(props.asignacion.rollover_in))
 /** Lo que de verdad hay para gastar este mes: lo asignado más lo que viene del anterior. */
 const efectivo = computed(() => asignado.value + arrastrado.value)
-const gastado = computed(() => aNumero(props.segmento.gastado))
-const sobrepaso = computed(() => aNumero(props.segmento.sobrepaso))
-const consumido = computed(() => aNumero(props.segmento.porcentaje_consumido))
+const gastado = computed(() => aNumero(props.asignacion.spent))
+const sobrepaso = computed(() => aNumero(props.asignacion.overspent))
+/** `spent_pct` es una proporción: aquí se pinta en 0-100. */
+const consumido = computed(() => (props.asignacion.spent_pct ?? 0) * 100)
 const sinAsignacion = computed(() => efectivo.value <= 0)
-const sobrepasado = computed(() => props.segmento.estado === 'sobrepasado')
+const sobrepasado = computed(() => props.asignacion.state === 'sobrepasado')
 
 /** Con sobrepaso el carril nominal se encoge para que el rojo quepa en la fila. */
 const tope = computed(() =>
@@ -73,11 +77,10 @@ const textoImportes = computed(() =>
 )
 
 const descripcion = computed(() => {
-  const nombre = props.segmento.nombre
   if (sinAsignacion.value) {
-    return `${nombre}: ${euros(gastado.value)} gastados sin presupuesto asignado.`
+    return `${nombre.value}: ${euros(gastado.value)} gastados sin presupuesto asignado.`
   }
-  const base = `${nombre}: ${euros(gastado.value)} gastados de ${euros(efectivo.value)}, ${porcentaje(consumido.value / 100)}`
+  const base = `${nombre.value}: ${euros(gastado.value)} gastados de ${euros(efectivo.value)}, ${porcentaje(consumido.value / 100)}`
   return sobrepasado.value
     ? `${base}. Sobrepasada en ${euros(sobrepaso.value)}.`
     : `${base}.`
@@ -93,10 +96,10 @@ const descripcion = computed(() => {
         :href="props.href"
         :type="props.href ? undefined : 'button'"
         :aria-label="descripcion"
-        @click="emit('activar', props.segmento)"
+        @click="emit('activar', props.asignacion)"
       >
         <span class="punto" :style="{ background: color }" aria-hidden="true" />
-        <span v-if="props.mostrarNombre" class="nombre">{{ props.segmento.nombre }}</span>
+        <span v-if="props.mostrarNombre" class="nombre">{{ nombre }}</span>
         <span v-if="sobrepasado" class="insignia">
           <TriangleAlert :size="12" aria-hidden="true" />
           {{ ETIQUETA_ESTADO.sobrepasado }}
@@ -133,7 +136,7 @@ const descripcion = computed(() => {
       <p v-else-if="arrastrado !== 0" class="nota">
         Incluye {{ euros(arrastrado) }} arrastrados del mes anterior
       </p>
-      <button v-if="sinAsignacion" type="button" class="asignar" @click="emit('asignar', props.segmento)">
+      <button v-if="sinAsignacion" type="button" class="asignar" @click="emit('asignar', props.asignacion)">
         <CirclePlus :size="14" aria-hidden="true" />
         Asignar presupuesto
       </button>

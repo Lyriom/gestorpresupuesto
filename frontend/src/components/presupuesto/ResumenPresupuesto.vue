@@ -20,11 +20,11 @@ import {
 } from 'lucide-vue-next'
 
 import { aNumero, etiquetaPeriodo, euros, porcentaje } from '@/lib/formato'
-import type { BarraPresupuesto as DatosBarra, ClaveCifra } from './types'
+import type { ClaveCifra, PresupuestoMes } from './types'
 
 const props = withDefaults(
   defineProps<{
-    barra: DatosBarra | null
+    barra: PresupuestoMes | null
     cargando?: boolean
     /** Cifra que se pinta en grande. Solo una por vista, y puede que ya la tenga la barra. */
     destacada?: ClaveCifra | null
@@ -46,14 +46,16 @@ interface Cifra {
 
 const cifras = computed<Cifra[]>(() => {
   const b = props.barra
-  const ingresos = aNumero(b?.ingresos)
-  const asignado = aNumero(b?.total_asignado)
-  const gastado = aNumero(b?.total_gastado)
-  const arrastrado = aNumero(b?.total_arrastrado)
-  const sinAsignar = aNumero(b?.sin_asignar)
-  const disponible = aNumero(b?.disponible)
-  const pctAsignado = aNumero(b?.porcentaje_asignado)
-  const pctGastado = aNumero(b?.porcentaje_gastado)
+  const ingresos = aNumero(b?.income)
+  const asignado = aNumero(b?.allocated_total)
+  const gastado = aNumero(b?.spent_total)
+  const arrastrado = aNumero(b?.rollover_in_total)
+  const sinAsignar = aNumero(b?.unassigned)
+  // Derivados de presentación: el esquema no los publica (§4.6 del contrato).
+  const disponible = ingresos + arrastrado - gastado
+  const base = Math.max(ingresos, asignado)
+  const pctAsignado = ingresos > 0 ? (asignado / ingresos) * 100 : 0
+  const pctGastado = base > 0 ? (gastado / base) * 100 : 0
 
   const lista: Cifra[] = [
     {
@@ -131,9 +133,9 @@ const cifras = computed<Cifra[]>(() => {
 const avisos = computed(() => {
   const b = props.barra
   if (!props.mostrarAvisos || !b) return []
-  const haySobrepaso = b.segmentos.some((s) => s.estado === 'sobrepasado')
-  const sobreasignado = aNumero(b.sin_asignar) < 0
-  return b.avisos.map((texto, i) => ({
+  const haySobrepaso = b.allocations.some((a) => a.state === 'sobrepasado')
+  const sobreasignado = aNumero(b.unassigned) < 0
+  return b.warnings.map((texto, i) => ({
     clave: `aviso-${i}`,
     texto,
     tono: (haySobrepaso ? 'negativo' : sobreasignado ? 'aviso' : 'info') as
@@ -144,7 +146,7 @@ const avisos = computed(() => {
 })
 
 const titulo = computed(() =>
-  props.barra ? `Resumen de ${etiquetaPeriodo(props.barra.periodo).toLowerCase()}` : 'Resumen del mes',
+  props.barra ? `Resumen de ${etiquetaPeriodo(props.barra.period).toLowerCase()}` : 'Resumen del mes',
 )
 </script>
 
