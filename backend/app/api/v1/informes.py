@@ -47,6 +47,7 @@ from app.core.errors import ReglaDeNegocio
 from app.models.categoria import Category
 from app.models.comercio import Payee
 from app.models.cuenta import Account
+from app.models.hogar import Household
 from app.models.presupuesto import BudgetAllocation, BudgetPeriod
 from app.models.producto import Product, ProductPrice
 from app.models.recurrente import RecurringOccurrence, RecurringRule
@@ -95,8 +96,9 @@ from app.schemas.informe import (
     TopComerciosRespuesta,
 )
 from app.schemas.transaccion import TransaccionRespuesta
+from app.services import anomalias as anomalias_servicio
 from app.services import precios
-from app.services.formato import CENTIMO, CUATRO_DECIMALES, cuantizar, euros, porcentaje
+from app.services.formato import CENTIMO, CUATRO_DECIMALES, cuantizar, porcentaje
 from app.services.recurrencia import Frecuencia as FrecuenciaMotor
 
 router = APIRouter(dependencies=[Depends(verificar_csrf)])
@@ -1353,14 +1355,21 @@ def _respuesta_transaccion(transaccion: Transaction) -> TransaccionRespuesta:
     )
 
 
-@router.get("/reports/anomalies", tags=["reports"], response_model=None, summary="Gasto inusual")
-async def anomalias(
-    alcance: Alcance, respuesta: Response, filtro: Annotated[AnomaliasFiltro, Query()]
-) -> Any:
-    """F-48: transacciones que se salen de la media histórica de su temática."""
-    rango = rango_de(filtro)
-    arbol = await _arbol(alcance)
-    comercios = {
+#: Cuánto histórico entra en la referencia. Dos años son suficientes para tener
+#: costumbre y evitan comparar el gasto de hoy con los precios de hace cinco años;
+#: además acotan la consulta, que si no crece con la vida del hogar.
+MESES_DE_HISTORIAL = 24
+
+
+def _retroceder(hasta: date, meses: int) -> date:
+    """El día 1 del mes que está `meses` antes del de `hasta`."""
+    primero = hasta.replace(day=1)
+    total = primero.year * 12 + primero.month - 1 - meses
+    return date(total // 12, total % 12 + 1, 1)
+
+
+async def _comercios(alcance: AlcanceHogar) -> dict[Any, Payee]:
+    return {
         comercio.id: comercio
         for comercio in (
             await alcance.sesion.execute(
@@ -1369,31 +1378,148 @@ async def anomalias(
         ).scalars()
     }
 
-    # La referencia es todo el histórico de la temática, no solo el periodo.
-    estadisticas = {
-        fila[0]: (Decimal(fila[1]), Decimal(fila[2] or 0))
-        for fila in (
-            await alcance.sesion.execute(
-                select(
-                    MOVIMIENTOS.c.category_id,
-                    func.avg(MOVIMIENTOS.c.spent),
-                    func.stddev_pop(MOVIMIENTOS.c.spent),
-                )
-                .where(
-                    MOVIMIENTOS.c.household_id == alcance.household_id,
-                    MOVIMIENTOS.c.kind == "expense",
-                    MOVIMIENTOS.c.excluded_from_reports.is_(False),
-                )
-                .group_by(MOVIMIENTOS.c.category_id)
-            )
-        ).all()
-    }
 
-    movimientos = (
+def _grupos_de(
+    fila: Any,
+    arbol: dict[uuidlib.UUID, Category],
+    comercios: dict[Any, Payee],
+) -> tuple[anomalias_servicio.Grupo | None, anomalias_servicio.Grupo | None]:
+    """Los dos conjuntos con los que se puede comparar un movimiento."""
+    tematica = None
+    if fila.category_id is not None and fila.category_id in arbol:
+        tematica = anomalias_servicio.Grupo(
+            ambito=anomalias_servicio.Ambito.TEMATICA,
+            clave=str(fila.category_id),
+            nombre=arbol[fila.category_id].name,
+        )
+    comercio = None
+    if fila.payee_id is not None and fila.payee_id in comercios:
+        comercio = anomalias_servicio.Grupo(
+            ambito=anomalias_servicio.Ambito.COMERCIO,
+            clave=str(fila.payee_id),
+            nombre=comercios[fila.payee_id].name,
+        )
+    return tematica, comercio
+
+
+@dataclass(slots=True)
+class GastoInusual:
+    """Una anomalía ya localizada en el movimiento que la provoca."""
+
+    anomalia: anomalias_servicio.Anomalia
+    transaction_id: uuidlib.UUID
+    category_id: uuidlib.UUID | None
+    payee_id: uuidlib.UUID | None
+
+
+async def gastos_inusuales(
+    alcance: AlcanceHogar,
+    rango: Rango,
+    *,
+    sigma: Decimal,
+    min_amount: Decimal | None = None,
+) -> list[GastoInusual]:
+    """F-48: los gastos del rango que se salen de lo habitual de su grupo.
+
+    Vive aquí, y no en `alertas.py` ni repetido en los dos, porque el informe y la
+    alerta tienen que decir el mismo número. Todo el cálculo está en
+    `app/services/anomalias.py`: aquí solo se traen las filas y se traducen.
+    """
+    arbol = await _arbol(alcance)
+    comercios = await _comercios(alcance)
+
+    # La referencia es el histórico del hogar, no solo el periodo que se mira: si
+    # se calculara con el propio mes, el único gasto grande del mes sería siempre
+    # «lo habitual» de ese mes.
+    desde = min(_retroceder(rango.hasta, MESES_DE_HISTORIAL), rango.desde)
+    historial_filas = (
         await alcance.sesion.execute(
-            _gasto(alcance.household_id, rango).order_by(MOVIMIENTOS.c.booked_on.desc())
+            select(MOVIMIENTOS).where(
+                MOVIMIENTOS.c.household_id == alcance.household_id,
+                MOVIMIENTOS.c.kind == "expense",
+                MOVIMIENTOS.c.excluded_from_reports.is_(False),
+                MOVIMIENTOS.c.booked_on >= desde,
+                MOVIMIENTOS.c.booked_on <= rango.hasta,
+            )
         )
     ).all()
+    candidatas = [fila for fila in historial_filas if rango.desde <= fila.booked_on <= rango.hasta]
+
+    # Un cargo previsto no es una sorpresa: hace falta saber cuáles vienen de una
+    # regla de recurrencia, y eso no está en la vista de movimientos.
+    recurrentes: set[uuidlib.UUID] = set()
+    if candidatas:
+        recurrentes = set(
+            (
+                await alcance.sesion.execute(
+                    select(Transaction.id).where(
+                        Transaction.household_id == alcance.household_id,
+                        Transaction.recurring_rule_id.is_not(None),
+                        Transaction.id.in_([fila.transaction_id for fila in candidatas]),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    def gasto_de(fila: Any) -> anomalias_servicio.Gasto:
+        tematica, comercio = _grupos_de(fila, arbol, comercios)
+        return anomalias_servicio.Gasto(
+            # El split es la unidad de comparación: una compra repartida entre dos
+            # temáticas no se compara entera con ninguna de las dos.
+            identificador=str(fila.split_id or fila.transaction_id),
+            importe=Decimal(fila.spent),
+            fecha=fila.booked_on,
+            tematica=tematica,
+            comercio=comercio,
+            es_recurrente=fila.transaction_id in recurrentes,
+        )
+
+    por_identificador = {gasto_de(fila).identificador: fila for fila in candidatas}
+    encontradas = anomalias_servicio.detectar(
+        [gasto_de(fila) for fila in historial_filas],
+        candidatos=[gasto_de(fila) for fila in candidatas],
+        sigma=sigma,
+    )
+    salida: list[GastoInusual] = []
+    for anomalia in encontradas:
+        fila = por_identificador.get(anomalia.identificador)
+        if fila is None:
+            continue
+        if min_amount is not None and anomalia.importe < min_amount:
+            continue
+        salida.append(
+            GastoInusual(
+                anomalia=anomalia,
+                transaction_id=fila.transaction_id,
+                category_id=fila.category_id,
+                payee_id=fila.payee_id,
+            )
+        )
+    return salida
+
+
+@router.get("/reports/anomalies", tags=["reports"], response_model=None, summary="Gasto inusual")
+async def anomalias(
+    alcance: Alcance, respuesta: Response, filtro: Annotated[AnomaliasFiltro, Query()]
+) -> Any:
+    """F-48: gastos que se salen de lo habitual de su temática o de su comercio."""
+    rango = rango_de(filtro)
+    # Sin `z` explícita manda el umbral del hogar: es el ajuste que el usuario ha
+    # tocado en la pantalla de preferencias y sería raro que el informe lo ignorase.
+    if "z" in filtro.model_fields_set:
+        sigma = Decimal(str(filtro.z))
+    else:
+        sigma = (
+            await alcance.sesion.execute(
+                select(Household.unusual_expense_sigma).where(Household.id == alcance.household_id)
+            )
+        ).scalar_one_or_none() or anomalias_servicio.SIGMA_POR_DEFECTO
+
+    inusuales = await gastos_inusuales(alcance, rango, sigma=sigma, min_amount=filtro.min_amount)
+    arbol = await _arbol(alcance)
+    comercios = await _comercios(alcance)
     transacciones = {
         transaccion.id: transaccion
         for transaccion in (
@@ -1401,7 +1527,7 @@ async def anomalias(
                 select(Transaction).where(
                     Transaction.household_id == alcance.household_id,
                     Transaction.id.in_(
-                        [fila.transaction_id for fila in movimientos] or [uuidlib.uuid4()]
+                        [uno.transaction_id for uno in inusuales] or [uuidlib.uuid4()]
                     ),
                 )
             )
@@ -1409,38 +1535,32 @@ async def anomalias(
     }
 
     filas: list[AnomaliaFilaRespuesta] = []
-    for fila in movimientos:
-        media, desviacion = estadisticas.get(fila.category_id, (CERO, CERO))
-        gasto = Decimal(fila.spent)
-        if gasto <= 0 or desviacion == 0:
-            continue
-        z = float(((gasto - media) / desviacion).quantize(Decimal("0.01")))
-        if z < filtro.z:
-            continue
-        if filtro.min_amount is not None and gasto < filtro.min_amount:
-            continue
-        transaccion = transacciones.get(fila.transaction_id)
+    for uno in inusuales:
+        transaccion = transacciones.get(uno.transaction_id)
         if transaccion is None:
             continue
-        nombre = arbol[fila.category_id].name if fila.category_id in arbol else "sin clasificar"
         filas.append(
             AnomaliaFilaRespuesta(
                 transaction=_respuesta_transaccion(transaccion),
                 category=(
-                    _ref_categoria(arbol[fila.category_id]) if fila.category_id in arbol else None
+                    _ref_categoria(arbol[uno.category_id]) if uno.category_id in arbol else None
                 ),
-                payee=ref_comercio(comercios.get(fila.payee_id)) if fila.payee_id else None,
-                amount=cuantizar(gasto),
-                average_amount=cuantizar(media),
-                z_score=z,
-                reason=(
-                    f"{euros(gasto)} frente a una media de {euros(cuantizar(media))} en {nombre}."
-                ),
+                payee=ref_comercio(comercios.get(uno.payee_id)) if uno.payee_id else None,
+                amount=uno.anomalia.importe,
+                # `average_amount` es el nombre del contrato, pero lo que va dentro
+                # es la **mediana**: es la referencia que cita el motivo y la que
+                # no se descoloca con el gasto extremo que se está detectando.
+                average_amount=uno.anomalia.referencia.mediana,
+                z_score=float(uno.anomalia.z),
+                reason=uno.anomalia.motivo,
             )
         )
 
     cuerpo = AnomaliasRespuesta(
-        period_from=rango.periodo_desde, period_to=rango.periodo_hasta, z=filtro.z, rows=filas
+        period_from=rango.periodo_desde,
+        period_to=rango.periodo_hasta,
+        z=float(sigma),
+        rows=filas,
     )
     if filtro.format == "csv":
         return csv_de("gasto-inusual", filas)

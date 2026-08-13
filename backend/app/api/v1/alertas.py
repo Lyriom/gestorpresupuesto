@@ -29,6 +29,7 @@ from app.api.v1.informes import (
     _por_comercio,
     _ref_categoria,
     fin_de,
+    gastos_inusuales,
     inicio_de,
     periodo_de,
 )
@@ -529,6 +530,36 @@ async def recalcular(
                 sujeto=("products", producto.id),
             )
 
+    if pedidos is None or "unusual_expense" in pedidos:
+        # F-48. El cálculo es el mismo que el del informe de gasto inusual, así que
+        # la alerta y el informe no pueden decir cosas distintas.
+        for inusual in await gastos_inusuales(alcance, rango, sigma=hogar.unusual_expense_sigma):
+            anomalia = inusual.anomalia
+            clave = f"unusual_expense:{datos.period}:{inusual.transaction_id}"
+            vivas.add(clave)
+            tocadas += await _asegurar_alerta(
+                alcance,
+                clave=clave,
+                tipo="unusual_expense",
+                # No es crítica: es un gasto que puede ser perfectamente
+                # voluntario, y la acción que se le pide al usuario es mirarlo.
+                severidad="warning",
+                titulo=f"Gasto inusual en {anomalia.referencia.grupo.nombre}",
+                cuerpo=anomalia.motivo,
+                periodo=rango.desde,
+                category_id=inusual.category_id,
+                carga={
+                    "amount": str(anomalia.importe),
+                    "usual_amount": str(anomalia.referencia.mediana),
+                    "average_amount": str(anomalia.referencia.media),
+                    "z_score": float(anomalia.z),
+                    "times_usual": float(anomalia.veces) if anomalia.veces is not None else None,
+                    "scope": anomalia.referencia.grupo.ambito.value,
+                    "observations": anomalia.referencia.observaciones,
+                },
+                sujeto=("transactions", inusual.transaction_id),
+            )
+
     # RN-71: si la causa ha desaparecido, la alerta del periodo se cierra sola.
     cerradas = 0
     for aviso in (
@@ -542,6 +573,7 @@ async def recalcular(
                         Alert.type == "budget_overspend",
                         Alert.type == "budget_near_limit",
                         Alert.type == "product_price_increase",
+                        Alert.type == "unusual_expense",
                     ),
                 )
             )
