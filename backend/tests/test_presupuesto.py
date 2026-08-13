@@ -89,6 +89,22 @@ class TestBarraDePresupuesto:
         barra = calcular_barra("2026-08", "1000", [entrada("Vivienda", "250")])
         assert barra.segmentos[0].porcentaje_de_la_barra == Decimal("25.00")
 
+    def test_una_devolucion_mayor_que_el_gasto_del_mes_no_pinta_en_negativo(self):
+        """Se compró el abrigo en julio y se devolvió en agosto.
+
+        Lo gastado del mes es negativo, y así hay que enseñarlo: es dinero que ha
+        vuelto. Pero el segmento se dibuja con el porcentaje consumido, y una
+        anchura negativa no significa nada; además el esquema de la API lo
+        rechazaba y tumbaba la pantalla entera del presupuesto con un 500.
+        """
+        barra = calcular_barra("2026-08", "1000", [entrada("Ropa", "150", "-130")])
+        segmento = barra.segmentos[0]
+
+        assert segmento.gastado == Decimal("-130.00")
+        assert segmento.porcentaje_consumido == Decimal("0.00")
+        assert segmento.disponible == Decimal("280.00")
+        assert segmento.sobrepaso == Decimal("0.00")
+
     def test_si_se_reparte_mas_de_lo_que_entra_la_barra_no_desborda(self):
         barra = calcular_barra(
             "2026-08", "1000", [entrada("Vivienda", "800"), entrada("Ocio", "600")]

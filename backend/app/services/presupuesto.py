@@ -166,11 +166,21 @@ def _estado_de(efectivo: Decimal, gastado: Decimal, disponible: Decimal) -> Esta
 
 
 def _porcentaje(parte: Decimal, total: Decimal) -> Decimal:
+    """Qué parte del total se ha consumido, de 0 en adelante.
+
+    Nunca baja de cero, y no por pudor con los números: si en el mes hay más
+    devoluciones que compras en una temática —se compró un abrigo en julio y se
+    devolvió en agosto— lo gastado sale negativo, que es la verdad y así se
+    enseña. Pero el segmento de la barra se dibuja con este porcentaje, y una
+    anchura negativa no significa nada. El importe conserva el signo; el trozo
+    pintado se queda en vacío.
+    """
     if total <= CERO:
         return CERO
     # No es dinero, así que no pasa por `cuantizar()`; el modo se fija aquí porque
     # el porcentaje se enseña al usuario y el empate tiene que subir.
-    return (parte / total * 100).quantize(CENTIMO, rounding=ROUND_HALF_UP)
+    porcentaje = (parte / total * 100).quantize(CENTIMO, rounding=ROUND_HALF_UP)
+    return max(porcentaje, CERO)
 
 
 def calcular_barra(

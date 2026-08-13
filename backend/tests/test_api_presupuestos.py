@@ -223,6 +223,29 @@ async def test_rn21_una_transferencia_no_es_gasto_en_la_barra(
     assert aplanar(despues["allocations"])[str(entorno.alimentacion.id)]["spent"] == "80.00"
 
 
+async def test_una_devolucion_mayor_que_el_gasto_no_rompe_la_barra(
+    cliente: AsyncClient, entorno: Entorno
+) -> None:
+    """Se compró en un mes y se devolvió en otro: en este el gasto queda negativo.
+
+    Es un caso corriente —cualquier devolución de una tienda— y dejaba la
+    pantalla principal en un 500: el porcentaje consumido salía negativo y el
+    esquema de la respuesta exigía que no lo fuera.
+    """
+    await ingresar(cliente, entorno, "2000.00", HOY)
+    await asignar(cliente, PERIODO, [(entorno.alimentacion.id, "150.00")])
+    await alta_gasto(cliente, entorno, importe="-130.00", tematica=entorno.alimentacion.id)
+
+    respuesta = await cliente.get(f"{RUTA}/budgets/{PERIODO}")
+
+    assert respuesta.status_code == 200, respuesta.text
+    linea = aplanar(respuesta.json()["allocations"])[str(entorno.alimentacion.id)]
+    # El importe conserva el signo, que es la verdad; el segmento no se pinta.
+    assert linea["spent"] == "-130.00"
+    assert linea["spent_pct"] == 0.0
+    assert linea["available"] == "280.00"
+
+
 async def test_un_gasto_repartido_aporta_su_split_a_cada_tematica(
     cliente: AsyncClient, entorno: Entorno
 ) -> None:

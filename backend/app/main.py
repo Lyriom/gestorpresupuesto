@@ -146,7 +146,9 @@ if settings.static_dir.is_dir():
 
     indice = settings.static_dir / "index.html"
 
-    @app.get("/{ruta_completa:path}", include_in_schema=False)
+    # HEAD además de GET: los monitores de disponibilidad piden la portada con
+    # HEAD para no descargarla entera, y un 405 les parece que el sitio está caído.
+    @app.api_route("/{ruta_completa:path}", methods=["GET", "HEAD"], include_in_schema=False)
     async def servir_spa(ruta_completa: str) -> Response:
         """Devuelve el fichero pedido si existe; si no, index.html.
 
