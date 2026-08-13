@@ -19,6 +19,7 @@ import hashlib
 import io
 import uuid as uuidlib
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
@@ -1412,6 +1413,31 @@ class GastoInusual:
     payee_id: uuidlib.UUID | None
 
 
+def _identificador(clave: tuple[Any, Any]) -> str:
+    movimiento, tematica = clave
+    return f"{movimiento}:{tematica}"
+
+
+def _por_movimiento_y_tematica(filas: Sequence[Any]) -> dict[tuple[Any, Any], list[Any]]:
+    """Agrupa las líneas de un movimiento que caen en la misma temática.
+
+    La unidad de comparación no puede ser la línea suelta. Una factura del súper
+    genera una línea por producto, todas en «Alimentación», y entonces lo
+    habitual de esa temática pasa a ser el precio de *un producto*: el aceite de
+    22,90 € de una compra normal salta como gasto inusual y el aviso se vuelve
+    ruido. Sumadas, la compra entera son 47,79 € y se compara con otras compras.
+
+    Tampoco puede ser el movimiento entero: una compra repartida entre dos
+    temáticas no debe compararse completa con ninguna de las dos. Por eso se
+    agrupa por movimiento **y** temática, que es exactamente el gasto que esa
+    compra supuso en ese sitio.
+    """
+    grupos: dict[tuple[Any, Any], list[Any]] = {}
+    for fila in filas:
+        grupos.setdefault((fila.transaction_id, fila.category_id), []).append(fila)
+    return grupos
+
+
 async def gastos_inusuales(
     alcance: AlcanceHogar,
     rango: Rango,
@@ -1463,23 +1489,24 @@ async def gastos_inusuales(
             .all()
         )
 
-    def gasto_de(fila: Any) -> anomalias_servicio.Gasto:
-        tematica, comercio = _grupos_de(fila, arbol, comercios)
+    def gasto_de(clave: tuple[Any, Any], filas: list[Any]) -> anomalias_servicio.Gasto:
+        primera = filas[0]
+        tematica, comercio = _grupos_de(primera, arbol, comercios)
         return anomalias_servicio.Gasto(
-            # El split es la unidad de comparación: una compra repartida entre dos
-            # temáticas no se compara entera con ninguna de las dos.
-            identificador=str(fila.split_id or fila.transaction_id),
-            importe=Decimal(fila.spent),
-            fecha=fila.booked_on,
+            identificador=_identificador(clave),
+            importe=sum((Decimal(fila.spent) for fila in filas), Decimal(0)),
+            fecha=primera.booked_on,
             tematica=tematica,
             comercio=comercio,
-            es_recurrente=fila.transaction_id in recurrentes,
+            es_recurrente=primera.transaction_id in recurrentes,
         )
 
-    por_identificador = {gasto_de(fila).identificador: fila for fila in candidatas}
+    historial = _por_movimiento_y_tematica(historial_filas)
+    candidatos = _por_movimiento_y_tematica(candidatas)
+    por_identificador = {_identificador(clave): filas[0] for clave, filas in candidatos.items()}
     encontradas = anomalias_servicio.detectar(
-        [gasto_de(fila) for fila in historial_filas],
-        candidatos=[gasto_de(fila) for fila in candidatas],
+        [gasto_de(clave, filas) for clave, filas in historial.items()],
+        candidatos=[gasto_de(clave, filas) for clave, filas in candidatos.items()],
         sigma=sigma,
     )
     salida: list[GastoInusual] = []

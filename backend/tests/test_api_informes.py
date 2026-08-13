@@ -251,6 +251,19 @@ async def test_saldo_proyectado(cliente, cesta):
     assert fila["will_be_negative"] is False
 
 
+async def test_una_compra_normal_del_super_no_es_un_gasto_inusual(cliente, cesta):
+    """La unidad de comparación es la compra, no cada producto de la factura.
+
+    Con la línea suelta como unidad, lo habitual de «Alimentación» pasaba a ser
+    el precio de *un producto* —unos 5 €— y el aceite de 22,90 € de una compra
+    corriente saltaba como gasto inusual en las tres facturas. Un aviso que
+    salta con la compra de todas las semanas no es un aviso.
+    """
+    laxo = await informe(cliente, "anomalies", z=0.5, **PERIODOS)
+
+    assert laxo["rows"] == []
+
+
 async def test_gasto_inusual(cliente, cesta):
     cuerpo = await informe(cliente, "anomalies", z=2.5, **PERIODOS)
     assert isinstance(cuerpo["rows"], list)
