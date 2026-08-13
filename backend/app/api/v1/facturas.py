@@ -66,6 +66,7 @@ from app.api.v1.productos import (
 )
 from app.core.config import settings
 from app.core.errors import AppError, Conflicto, NoEncontrado, ReglaDeNegocio
+from app.db.session import fijar_alcance
 from app.models.alerta import Alert
 from app.models.categoria import Category
 from app.models.comercio import Payee
@@ -94,10 +95,15 @@ from app.schemas.factura import (
     LineasFacturaRespuesta,
     LineasFacturaSustituirCrear,
     NormalizadaRespuesta,
+    PlantillaFacturaActualizar,
+    PlantillaFacturaCrear,
+    PlantillaFacturaRespuesta,
+    PlantillaProbarCrear,
     VincularProductoCrear,
 )
 from app.schemas.producto import AlertaPrecioRespuesta
 from app.services import formato
+from app.services import plantillas_extraccion as plantillas
 from app.services.extraccion_pdf import (
     TOLERANCIA,
     FacturaExtraida,
@@ -108,6 +114,13 @@ from app.services.extraccion_pdf import (
 )
 from app.services.formato import CENTIMO, CUATRO_DECIMALES, cuantizar
 from app.services.normalizacion import clave_agrupacion, normalizar_descripcion, sin_acentos
+from app.services.plantillas_extraccion import (
+    PlantillaExtraccion,
+    extraer_con_plantillas,
+)
+from app.services.plantillas_extraccion import (
+    Resultado as ResultadoPlantilla,
+)
 from app.services.precios import variacion as variacion_de_precio
 
 logger = logging.getLogger("app.facturas")
@@ -335,10 +348,11 @@ async def procesar_factura(
     corre, y el trabajo de CPU va a un hilo para no bloquear el bucle de eventos.
     """
     async with AsyncSession(bind=motor, expire_on_commit=False) as sesion:
-        await sesion.execute(
-            text("SELECT set_config('app.household_id', :valor, true)"),
-            {"valor": str(household_id)},
-        )
+        # No basta con fijar `app.household_id` una vez: esta función confirma hasta
+        # cuatro veces y sigue escribiendo, y tanto la variable como el rol mueren con
+        # la transacción. `fijar_alcance` lo deja anotado en la sesión para que se
+        # reinstale en cada transacción nueva.
+        await fijar_alcance(sesion, household_id)
         factura = (
             await sesion.execute(
                 select(Invoice).where(
@@ -352,16 +366,24 @@ async def procesar_factura(
         factura.processing_started_at = ahora()
         await sesion.commit()
 
+        candidatas, exigir = await _plantillas_para(
+            sesion, household_id, factura.extraction_template_id
+        )
         try:
             datos = ruta_de(factura.storage_key).read_bytes()
-            extraida = await run_in_threadpool(
-                extraer_factura,
+            # F-40: si hay plantilla para el emisor se usa primero, y si no da un
+            # resultado utilizable se cae a las tres pasadas de siempre.
+            resultado = await run_in_threadpool(
+                extraer_con_plantillas,
                 datos,
+                candidatas,
+                exigir_coincidencia=exigir,
                 max_bytes=settings.max_upload_bytes,
                 max_paginas=settings.max_pdf_pages,
                 ocr_habilitado=settings.ocr_enabled or forzar_ocr,
                 idiomas_ocr=settings.ocr_languages,
             )
+            extraida = resultado.factura
         except (PdfInvalido, OSError) as exc:
             factura.status = EstadoFactura.FAILED.value
             factura.error_message = str(exc) or "No se ha podido leer el PDF."
@@ -378,8 +400,58 @@ async def procesar_factura(
             await sesion.commit()
             return
 
+        await _anotar_uso(sesion, resultado)
         await _aplicar_extraccion(sesion, factura, extraida, conservar_editadas=conservar_editadas)
+        # La plantilla que ganó queda apuntada en la factura: es la trazabilidad de
+        # «por qué esta factura se ha leído así».
+        if resultado.plantilla is not None and resultado.plantilla.identificador:
+            factura.extraction_template_id = uuidlib.UUID(resultado.plantilla.identificador)
         await sesion.commit()
+
+
+async def _plantillas_para(
+    sesion: AsyncSession,
+    household_id: uuidlib.UUID,
+    template_id: uuidlib.UUID | None,
+) -> tuple[list[PlantillaExtraccion], bool]:
+    """Las plantillas que pueden aplicarse a una factura de este hogar (F-40).
+
+    Devuelve además si hay que exigir que el patrón reconozca el documento: cuando
+    el usuario ha elegido una plantilla a mano, no —sabe algo que el patrón no dice.
+    """
+    consulta = select(ExtractionTemplate).where(ExtractionTemplate.is_active.is_(True))
+    if template_id is not None:
+        consulta = consulta.where(ExtractionTemplate.id == template_id)
+    else:
+        # `household_id IS NULL` son las de serie de la instalación (Iberdrola,
+        # Movistar); las del hogar ganan porque llevan prioridad más baja.
+        consulta = consulta.where(
+            or_(
+                ExtractionTemplate.household_id.is_(None),
+                ExtractionTemplate.household_id == household_id,
+            )
+        )
+    filas = list((await sesion.execute(consulta)).scalars())
+    return [plantilla_desde_fila(fila) for fila in filas], template_id is None
+
+
+async def _anotar_uso(sesion: AsyncSession, resultado: ResultadoPlantilla) -> None:
+    """Lleva la cuenta de aciertos y fallos: una plantilla que ya no sirve se ve."""
+    contadores: list[tuple[uuidlib.UUID, bool]] = []
+    for plantilla in resultado.fallidas:
+        if plantilla.identificador:
+            contadores.append((uuidlib.UUID(plantilla.identificador), False))
+    if resultado.plantilla is not None and resultado.plantilla.identificador:
+        contadores.append((uuidlib.UUID(resultado.plantilla.identificador), True))
+    for identificador, acierto in contadores:
+        fila = await sesion.get(ExtractionTemplate, identificador)
+        if fila is None:
+            continue
+        if acierto:
+            fila.hit_count += 1
+            fila.last_used_at = ahora()
+        else:
+            fila.miss_count += 1
 
 
 async def _aplicar_extraccion(
@@ -947,6 +1019,458 @@ async def listar(
         for factura in facturas
     ]
     return Pagina.crear(filas, page=filtro.page, size=filtro.size, total=total)
+
+
+# --------------------------------------------------------------------------- #
+# Plantillas de extracción por proveedor (F-40, §3.12)
+#
+# Van **antes** de `/invoices/{invoice_id}`: FastAPI resuelve por orden de
+# declaración, y al revés la ruta `/invoices/templates` la capturaría el
+# parámetro de la factura y respondería 422 al intentar leer «templates» como
+# UUID.
+# --------------------------------------------------------------------------- #
+
+
+def plantilla_desde_fila(fila: ExtractionTemplate) -> PlantillaExtraccion:
+    """Traduce la fila a la estructura del servicio. Las reglas viven en el `jsonb`."""
+    return plantillas.desde_jsonb(
+        nombre=fila.name,
+        identificador=str(fila.id),
+        patron_emisor=fila.issuer_pattern,
+        nif_emisor=fila.issuer_tax_id,
+        prioridad=fila.priority,
+        page_settings=fila.page_settings,
+        header_patterns=fila.header_patterns,
+        line_patterns=fila.line_patterns,
+        post_rules=fila.post_rules,
+    )
+
+
+def _volcar_plantilla(fila: ExtractionTemplate, plantilla: PlantillaExtraccion) -> None:
+    """La inversa: reparte la plantilla en las cuatro columnas `jsonb` de la fila."""
+    columnas = plantillas.a_jsonb(plantilla)
+    fila.issuer_pattern = plantilla.patron_emisor
+    fila.issuer_tax_id = plantilla.nif_emisor
+    fila.page_settings = columnas["page_settings"]
+    fila.header_patterns = columnas["header_patterns"]
+    fila.line_patterns = columnas["line_patterns"]
+    fila.post_rules = columnas["post_rules"]
+
+
+def _exigir_plantilla_valida(plantilla: PlantillaExtraccion) -> None:
+    errores = plantillas.validar(plantilla)
+    if errores:
+        raise ReglaDeNegocio(
+            errores[0], codigo="datos_invalidos", estado=status.HTTP_422_UNPROCESSABLE_ENTITY
+        )
+
+
+async def _plantilla_o_404(alcance: AlcanceHogar, template_id: uuidlib.UUID) -> ExtractionTemplate:
+    fila = (
+        await alcance.sesion.execute(
+            select(ExtractionTemplate).where(
+                ExtractionTemplate.id == template_id,
+                or_(
+                    ExtractionTemplate.household_id.is_(None),
+                    ExtractionTemplate.household_id == alcance.household_id,
+                ),
+            )
+        )
+    ).scalar_one_or_none()
+    if fila is None:
+        raise NoEncontrado("Esa plantilla de extracción no existe.")
+    return fila
+
+
+def _exigir_plantilla_del_hogar(fila: ExtractionTemplate) -> None:
+    """Las de serie son de la instalación: se copian, no se editan."""
+    if fila.household_id is None:
+        raise Conflicto(
+            "Esta plantilla viene de serie con la instalación. Crea una copia con tus "
+            "cambios en lugar de modificarla.",
+            codigo="conflicto",
+        )
+
+
+async def respuesta_plantilla(
+    alcance: AlcanceHogar, fila: ExtractionTemplate, *, cuantas: int | None = None
+) -> PlantillaFacturaRespuesta:
+    # `created_at`/`updated_at` los pone PostgreSQL y quedan expirados tras
+    # escribir; leerlos sin más explota con `MissingGreenlet`.
+    await cargado(alcance.sesion, fila)
+    plantilla = plantilla_desde_fila(fila)
+    if cuantas is None:
+        cuantas = (
+            await alcance.sesion.execute(
+                select(func.count(Invoice.id)).where(
+                    Invoice.household_id == alcance.household_id,
+                    Invoice.extraction_template_id == fila.id,
+                )
+            )
+        ).scalar_one()
+    comercio = await alcance.sesion.get(Payee, fila.payee_id) if fila.payee_id else None
+    return PlantillaFacturaRespuesta(
+        id=fila.id,
+        created_at=fila.created_at,
+        updated_at=fila.updated_at,
+        name=fila.name,
+        payee=ref_comercio(comercio) if comercio else None,
+        issuer_pattern=fila.issuer_pattern or "",
+        field_patterns=plantillas.campos_editables(plantilla),
+        table_columns=dict(plantilla.columnas),
+        default_category_id=fila.default_category_id,
+        force_ocr=plantilla.forzar_ocr,
+        is_active=fila.is_active,
+        invoices_count=cuantas,
+        last_used_at=fila.last_used_at,
+    )
+
+
+@router.get("/invoices/templates", tags=["invoices"], summary="Plantillas del proveedor")
+async def listar_plantillas(
+    alcance: Alcance,
+    q: str | None = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    size: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> Pagina[PlantillaFacturaRespuesta]:
+    """Las del hogar y las de serie de la instalación, las del hogar primero."""
+    consulta = select(ExtractionTemplate).where(
+        or_(
+            ExtractionTemplate.household_id.is_(None),
+            ExtractionTemplate.household_id == alcance.household_id,
+        )
+    )
+    if q:
+        aguja = f"%{q.lower()}%"
+        consulta = consulta.where(
+            or_(
+                func.lower(ExtractionTemplate.name).like(aguja),
+                func.lower(ExtractionTemplate.issuer_pattern).like(aguja),
+                func.lower(ExtractionTemplate.issuer_tax_id).like(aguja),
+            )
+        )
+    total = (
+        await alcance.sesion.execute(select(func.count()).select_from(consulta.subquery()))
+    ).scalar_one()
+    filas = list(
+        (
+            await alcance.sesion.execute(
+                consulta.order_by(
+                    ExtractionTemplate.priority, ExtractionTemplate.name, ExtractionTemplate.id
+                )
+                .offset((page - 1) * size)
+                .limit(size)
+            )
+        ).scalars()
+    )
+    return Pagina.crear(
+        [await respuesta_plantilla(alcance, fila) for fila in filas],
+        page=page,
+        size=size,
+        total=total,
+    )
+
+
+async def _deducir_de_factura(
+    alcance: AlcanceHogar, invoice_id: uuidlib.UUID
+) -> plantillas.Deduccion:
+    """Aprende de una factura ya corregida: el valor de verdad de F-40.
+
+    La verdad es lo que el usuario dejó tras revisar; el punto de partida, lo que
+    el extractor había leído. La diferencia entre las dos es exactamente la
+    corrección que se repetía cada mes, y de ahí salen las reglas.
+    """
+    factura = await _factura_o_404(alcance, invoice_id)
+    if not factura.raw_text:
+        raise ReglaDeNegocio(
+            "De esta factura no se guardó el texto del PDF, así que no hay de dónde "
+            "deducir la plantilla. Vuelve a procesarla y revísala.",
+            codigo="datos_invalidos",
+            estado=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    lineas = await _lineas_de(alcance, factura)
+    corregida = plantillas.FacturaCorregida(
+        texto=factura.raw_text,
+        emisor=factura.issuer_name,
+        nif_emisor=factura.issuer_tax_id,
+        numero=factura.invoice_number,
+        fecha=factura.issued_on,
+        base_imponible=factura.taxable_base,
+        impuestos=factura.tax_amount,
+        total=factura.total_amount,
+        moneda=factura.currency,
+        lineas=tuple(
+            plantillas.LineaCorregida(
+                descripcion=linea.raw_description,
+                cantidad=linea.quantity,
+                unidad=linea.unit,
+                precio_unitario=linea.unit_price,
+                total=linea.line_total,
+                excluida=linea.excluded,
+            )
+            for linea in lineas
+        ),
+    )
+    # Se relee el PDF para saber qué habría leído el extractor genérico: comparar
+    # contra las líneas guardadas no serviría, porque ya llevan la corrección.
+    try:
+        datos = ruta_de(factura.storage_key).read_bytes()
+        leida = await run_in_threadpool(
+            extraer_factura,
+            datos,
+            max_bytes=settings.max_upload_bytes,
+            max_paginas=settings.max_pdf_pages,
+            ocr_habilitado=False,
+        )
+    except (PdfInvalido, OSError):
+        logger.info("No se ha podido releer el PDF de %s para deducir la plantilla", invoice_id)
+        leida = None
+    return plantillas.deducir(corregida, leida, nombre=factura.issuer_name or factura.file_name)
+
+
+@router.post(
+    "/invoices/templates",
+    tags=["invoices"],
+    status_code=status.HTTP_201_CREATED,
+    summary="Crea una plantilla del proveedor",
+)
+async def crear_plantilla(
+    alcance: AlcanceEscritura, datos: PlantillaFacturaCrear
+) -> PlantillaFacturaRespuesta:
+    """Crea la plantilla, opcionalmente aprendida de una factura ya corregida."""
+    if datos.from_invoice_id is not None:
+        deduccion = await _deducir_de_factura(alcance, datos.from_invoice_id)
+        plantilla = deduccion.plantilla
+    else:
+        plantilla = PlantillaExtraccion(nombre=datos.name)
+    plantilla.nombre = datos.name
+    plantilla.forzar_ocr = datos.force_ocr
+    # Lo que el cliente manda pisa lo deducido: si se ha molestado en escribir una
+    # regla, es porque la deducida no le vale.
+    if datos.field_patterns:
+        plantillas.con_campos_editables(plantilla, datos.field_patterns, None)
+    if datos.table_columns:
+        plantilla.columnas = dict(datos.table_columns)
+    plantilla.patron_emisor = datos.issuer_pattern
+    _exigir_plantilla_valida(plantilla)
+
+    if datos.payee_id is not None:
+        comercio = await alcance.sesion.get(Payee, datos.payee_id)
+        if comercio is None or comercio.household_id != alcance.household_id:
+            raise NoEncontrado("Ese comercio no existe.")
+    if datos.default_category_id is not None:
+        await _validar_categoria(alcance, datos.default_category_id)
+
+    fila = ExtractionTemplate(
+        household_id=alcance.household_id,
+        payee_id=datos.payee_id,
+        name=datos.name,
+        # Menor gana: una plantilla del hogar se pone delante de la de serie.
+        priority=50,
+        default_category_id=datos.default_category_id,
+        is_active=datos.is_active,
+        created_by_id=alcance.usuario.id,
+    )
+    _volcar_plantilla(fila, plantilla)
+    alcance.sesion.add(fila)
+    await alcance.sesion.commit()
+    return await respuesta_plantilla(alcance, fila, cuantas=0)
+
+
+@router.post(
+    "/invoices/templates/deduce", tags=["invoices"], summary="Deduce una plantilla sin guardarla"
+)
+async def deducir_plantilla(
+    alcance: Alcance, datos: PlantillaProbarCrear
+) -> PlantillaFacturaRespuesta:
+    """Previsualiza lo que se guardaría: reglas propuestas, con `id` en blanco.
+
+    Existe para que la pantalla pueda enseñar las reglas **antes** de crear nada:
+    una plantilla que el usuario no ha visto es una caja negra, y la funcionalidad
+    va justo de lo contrario.
+    """
+    deduccion = await _deducir_de_factura(alcance, datos.invoice_id)
+    plantilla = deduccion.plantilla
+    momento = ahora()
+    return PlantillaFacturaRespuesta(
+        id=uuidlib.UUID(int=0),
+        created_at=momento,
+        updated_at=momento,
+        name=plantilla.nombre,
+        issuer_pattern=plantilla.patron_emisor or "",
+        field_patterns=plantillas.campos_editables(plantilla),
+        table_columns=dict(plantilla.columnas),
+        force_ocr=plantilla.forzar_ocr,
+        is_active=True,
+        invoices_count=0,
+    )
+
+
+@router.get(
+    "/invoices/templates/{template_id}", tags=["invoices"], summary="Detalle de la plantilla"
+)
+async def detalle_plantilla(
+    alcance: Alcance, template_id: uuidlib.UUID
+) -> PlantillaFacturaRespuesta:
+    return await respuesta_plantilla(alcance, await _plantilla_o_404(alcance, template_id))
+
+
+@router.patch("/invoices/templates/{template_id}", tags=["invoices"], summary="Edita la plantilla")
+async def actualizar_plantilla(
+    alcance: AlcanceEscritura, template_id: uuidlib.UUID, datos: PlantillaFacturaActualizar
+) -> PlantillaFacturaRespuesta:
+    fila = await _plantilla_o_404(alcance, template_id)
+    _exigir_plantilla_del_hogar(fila)
+    campos = datos.model_dump(exclude_unset=True)
+    plantilla = plantilla_desde_fila(fila)
+
+    if "field_patterns" in campos:
+        plantillas.con_campos_editables(plantilla, campos["field_patterns"] or {}, None)
+    if "table_columns" in campos:
+        plantilla.columnas = dict(campos["table_columns"] or {})
+    if "issuer_pattern" in campos:
+        plantilla.patron_emisor = campos["issuer_pattern"]
+    if "force_ocr" in campos:
+        plantilla.forzar_ocr = bool(campos["force_ocr"])
+    _exigir_plantilla_valida(plantilla)
+
+    if "name" in campos and campos["name"]:
+        fila.name = campos["name"]
+        plantilla.nombre = campos["name"]
+    if "payee_id" in campos:
+        if campos["payee_id"] is not None:
+            comercio = await alcance.sesion.get(Payee, campos["payee_id"])
+            if comercio is None or comercio.household_id != alcance.household_id:
+                raise NoEncontrado("Ese comercio no existe.")
+        fila.payee_id = campos["payee_id"]
+    if "default_category_id" in campos:
+        if campos["default_category_id"] is not None:
+            await _validar_categoria(alcance, campos["default_category_id"])
+        fila.default_category_id = campos["default_category_id"]
+    if "is_active" in campos and campos["is_active"] is not None:
+        fila.is_active = campos["is_active"]
+
+    _volcar_plantilla(fila, plantilla)
+    # Editar una plantilla la versiona: así se puede distinguir «la plantilla falló»
+    # de «la plantilla es otra desde ayer» al mirar los contadores.
+    fila.version += 1
+    await alcance.sesion.commit()
+    return await respuesta_plantilla(alcance, fila)
+
+
+@router.delete(
+    "/invoices/templates/{template_id}",
+    tags=["invoices"],
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Borra la plantilla",
+)
+async def borrar_plantilla(alcance: AlcanceEscritura, template_id: uuidlib.UUID) -> Response:
+    fila = await _plantilla_o_404(alcance, template_id)
+    _exigir_plantilla_del_hogar(fila)
+    # `invoices.extraction_template_id` es `ON DELETE SET NULL`: borrar la plantilla
+    # no se lleva por delante ninguna factura ya leída.
+    await alcance.sesion.delete(fila)
+    await alcance.sesion.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/invoices/templates/{template_id}/test",
+    tags=["invoices"],
+    summary="Prueba la plantilla contra una factura",
+)
+async def probar_plantilla(
+    alcance: Alcance, template_id: uuidlib.UUID, datos: PlantillaProbarCrear
+) -> LineasFacturaRespuesta:
+    """Qué habría leído esta plantilla, sin guardar nada.
+
+    Es la única forma honesta de ofrecer plantillas editables: el usuario cambia
+    una expresión y ve el resultado antes de que toque ninguna factura.
+    """
+    fila = await _plantilla_o_404(alcance, template_id)
+    plantilla = plantilla_desde_fila(fila)
+    factura = await _factura_o_404(alcance, datos.invoice_id)
+    try:
+        contenido = ruta_de(factura.storage_key).read_bytes()
+    except OSError as exc:
+        raise NoEncontrado("El fichero de esta factura no está disponible.") from exc
+
+    try:
+        leida = await run_in_threadpool(
+            plantillas.aplicar,
+            contenido,
+            plantilla,
+            max_bytes=settings.max_upload_bytes,
+            max_paginas=settings.max_pdf_pages,
+            ocr_habilitado=settings.ocr_enabled,
+            idiomas_ocr=settings.ocr_languages,
+        )
+    except plantillas.PlantillaInvalida as exc:
+        raise ReglaDeNegocio(
+            str(exc), codigo="datos_invalidos", estado=status.HTTP_422_UNPROCESSABLE_ENTITY
+        ) from exc
+    except PdfInvalido as exc:
+        raise ReglaDeNegocio(str(exc), codigo="pdf_invalido") from exc
+
+    if leida is None:
+        return LineasFacturaRespuesta(
+            invoice_id=factura.id,
+            status=EstadoFactura(factura.status),
+            lines_sum=CERO,
+            can_confirm=False,
+            blocking_reasons=[
+                "La plantilla no ha leído nada de esta factura: revisa el patrón del "
+                "emisor y las reglas de las líneas."
+            ],
+            lines=[],
+        )
+
+    suma = cuantizar(sum((linea.total or CERO for linea in leida.lineas), CERO))
+    descuadre = (
+        cuantizar(suma - leida.total)
+        if leida.total is not None and abs(suma - leida.total) > TOLERANCIA
+        else None
+    )
+    return LineasFacturaRespuesta(
+        invoice_id=factura.id,
+        status=EstadoFactura(factura.status),
+        total=leida.total,
+        taxable_base=leida.base_imponible,
+        lines_sum=suma,
+        total_mismatch=descuadre,
+        # Nada de esto se ha guardado, así que no hay revisión que confirmar.
+        can_confirm=False,
+        blocking_reasons=["Esta es una prueba de la plantilla: no se ha guardado nada."],
+        warnings=list(leida.avisos),
+        low_confidence_lines=sum(1 for linea in leida.lineas if linea.confianza < CONFIANZA_BAJA),
+        lines=[
+            LineaFacturaRespuesta(
+                # Identificador sintético y estable: estas líneas no existen en la
+                # base de datos, pero el esquema de la pantalla de revisión exige
+                # uno y repetir la prueba debe dar el mismo.
+                id=uuidlib.uuid5(uuidlib.NAMESPACE_OID, f"{fila.id}:{factura.id}:{numero}"),
+                line_number=numero,
+                description=linea.descripcion[:300],
+                quantity=linea.cantidad,
+                unit=linea.unidad,
+                unit_price=linea.precio_unitario,
+                total=linea.total,
+                confidence=round(linea.confianza, 3),
+                normalized=(
+                    NormalizadaRespuesta(
+                        canonical=linea.normalizada.canonica,
+                        brand_guess=linea.normalizada.marca_probable,
+                        size_value=linea.normalizada.tamanyo_valor,
+                        size_unit=linea.normalizada.tamanyo_unidad,
+                        code=linea.normalizada.codigo,
+                    )
+                    if linea.normalizada
+                    else None
+                ),
+            )
+            for numero, linea in enumerate(leida.lineas, start=1)
+        ],
+    )
 
 
 @router.get("/invoices/{invoice_id}", tags=["invoices"], summary="Cabecera de la factura")
