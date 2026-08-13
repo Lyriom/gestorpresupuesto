@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="es" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#0d1117" />
+    <meta name="description" content="Gestor de presupuesto personal: reparte los ingresos del mes por temáticas, controla los gastos y sigue la evolución de los precios de tus facturas." />
+    <title>Gestor de Presupuesto</title>
+    <script>
+      // Aplica el tema guardado antes de la primera pintura para que no haya
+      // un destello de tema claro al recargar.
+      ;(() => {
+        try {
+          const guardado = localStorage.getItem('tema')
+          if (guardado === 'light' || guardado === 'dark') {
+            document.documentElement.dataset.theme = guardado
+          }
+        } catch {
+          /* localStorage bloqueado: se queda el tema oscuro por defecto */
+        }
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
