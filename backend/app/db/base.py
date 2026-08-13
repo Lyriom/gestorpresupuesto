@@ -24,6 +24,23 @@ NAMING_CONVENTION = {
 # de redondeo en los saldos.
 Money = Numeric(14, 2)
 
+# Precios unitarios: las facturas de luz, gas y telefonía traen 4-6 decimales.
+# Redondear a céntimos falsearía el histórico de precios (F-15, F-16, F-38).
+UnitPrice = Numeric(14, 4)
+
+# Cantidades: 3,472 kWh, 0,850 kg, 12 uds.
+Quantity = Numeric(14, 4)
+
+# Confianza del parser y puntuaciones de similitud, 0..1 y 0..100.
+Confidence = Numeric(4, 3)
+Score = Numeric(5, 2)
+
+# Porcentajes de variación: ±99999,99 % cubre cualquier subida sin desbordar.
+Percentage = Numeric(7, 2)
+
+# Tipos de interés nominales: 3,4500 % se guarda con cuatro decimales.
+Rate = Numeric(7, 4)
+
 
 class Base(DeclarativeBase):
     """Base declarativa con la convención de nombres aplicada."""
@@ -44,9 +61,7 @@ class UUIDPrimaryKey:
     ida y vuelta a la base de datos.
     """
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
 
 class Timestamps:
