@@ -499,6 +499,20 @@ _LINEAS_A_IGNORAR = (
     "periodo de facturacion",
 )
 
+# Datos de contacto del encabezado que el análisis por líneas confunde con
+# productos: "Tel. 910 000 000" encaja en el patrón de "descripción + números al
+# final" y se leía como una línea de 910 millones de euros. Se comprueba con
+# límite de palabra para no descartar un "Televisor" o un "Telefonía móvil", que
+# sí son conceptos facturables.
+_PATRON_CONTACTO = re.compile(
+    r"^(?:tel|tlf|tfno|fax|movil|whatsapp|nif|cif|iban|bic|ref|cp)\b[.:]?\s",
+    re.IGNORECASE,
+)
+
+# Nueve dígitos seguidos, o en grupos de tres, empezando por 6, 7, 8 o 9: un
+# teléfono español. Nunca es un importe.
+_PATRON_TELEFONO = re.compile(r"\b[6789]\d{2}[\s.]?\d{3}[\s.]?\d{3}\b")
+
 
 def _extraer_de_texto(texto: str) -> list[LineaExtraida]:
     lineas: list[LineaExtraida] = []
@@ -508,6 +522,8 @@ def _extraer_de_texto(texto: str) -> list[LineaExtraida]:
             continue
         plana = _sin_tildes_min(limpia)
         if any(plana.startswith(ignorar) for ignorar in _LINEAS_A_IGNORAR):
+            continue
+        if _PATRON_CONTACTO.match(plana) or _PATRON_TELEFONO.search(limpia):
             continue
         coincidencia = _PATRON_LINEA_TEXTO.match(limpia)
         if not coincidencia:
@@ -602,6 +618,44 @@ def validar_pdf(datos: bytes, max_bytes: int, max_paginas: int) -> int:
     return paginas
 
 
+# Cuánto puede pasarse una línea del total de la factura antes de considerarla
+# basura. Se deja holgado (el doble) porque hay facturas con descuentos globales
+# o abonos que hacen que una línea supere el total legítimamente; lo que no es
+# legítimo es multiplicarlo por mil.
+FACTOR_LINEA_IMPOSIBLE = Decimal(2)
+
+
+def _descartar_lineas_imposibles(factura: FacturaExtraida) -> None:
+    """Quita las líneas cuyo importe no cabe en la factura.
+
+    El OCR y el análisis por líneas cuelan de vez en cuando un número que no es
+    un importe —un teléfono, un código de barras, un número de cuenta— y una sola
+    de esas líneas descuadra la suma por completo. Si el total de la factura se
+    ha leído, sirve de red: una línea que lo duplica no es un producto.
+
+    Se avisa siempre, en lugar de descartar en silencio, para que el usuario
+    pueda añadir a mano lo que se haya quitado por error.
+    """
+    if factura.total is None or factura.total <= 0 or not factura.lineas:
+        return
+
+    limite = factura.total * FACTOR_LINEA_IMPOSIBLE
+    conservadas = [
+        linea for linea in factura.lineas if linea.total is None or abs(linea.total) <= limite
+    ]
+    descartadas = len(factura.lineas) - len(conservadas)
+    if not descartadas:
+        return
+
+    factura.lineas = conservadas
+    factura.avisos.append(
+        f"Se {'ha' if descartadas == 1 else 'han'} descartado {descartadas} "
+        f"{'línea' if descartadas == 1 else 'líneas'} con un importe imposible para el total "
+        f"de esta factura ({factura.total} €): casi siempre es un teléfono o un número de "
+        "referencia que se ha leído como precio. Revisa si falta algo."
+    )
+
+
 def extraer_factura(
     datos: bytes,
     *,
@@ -661,6 +715,7 @@ def extraer_factura(
         unicas.append(linea)
     factura.lineas = unicas
 
+    _descartar_lineas_imposibles(factura)
     factura.evaluar()
     logger.info(
         "Factura leída por %s: %d líneas, confianza %.2f",

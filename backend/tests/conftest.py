@@ -106,3 +106,21 @@ def pdf_sin_texto() -> bytes:
     datos = documento.tobytes()
     documento.close()
     return datos
+
+
+@pytest.fixture
+def factura_con_telefono() -> bytes:
+    """Factura con el teléfono en el encabezado, como las escaneadas reales."""
+    filas = [
+        (50, 60, "SUPERMERCADOS EL AHORRO S.L."),
+        (50, 74, "NIF: B12345674"),
+        (50, 88, "Tel. 910 000 000"),
+        (400, 60, "FACTURA Nº FS-2026/0200"),
+        (400, 74, "Fecha de emision: 07/08/2026"),
+        (50, 130, "Descripcion                      Cantidad   Precio    Importe"),
+        (50, 150, "LECHE PASCUAL 1L BRIK               6        1,15       6,90"),
+        (50, 166, "PAN DE MOLDE INTEGRAL 460G          1        1,85       1,85"),
+        (50, 240, "Base imponible                                           8,75"),
+        (50, 256, "TOTAL A PAGAR                                            9,10"),
+    ]
+    return _pdf_desde_lineas(filas)

@@ -170,3 +170,67 @@ class TestPdfSinTexto:
         assert factura.lineas == []
         assert factura.confianza < 0.3
         assert factura.avisos
+
+
+class TestBasuraDelOcr:
+    """Casos vistos al leer facturas escaneadas de verdad."""
+
+    def test_descarta_el_telefono_del_encabezado(self, factura_con_telefono):
+        # El "Tel. 910 000 000" del encabezado encaja en el patrón de
+        # "descripción + números al final" y se leía como una línea de 910
+        # millones de euros, que descuadraba la factura entera.
+        factura = extraer_factura(factura_con_telefono, ocr_habilitado=False)
+        descripciones = [linea.descripcion.lower() for linea in factura.lineas]
+        assert not any(d.startswith("tel") for d in descripciones)
+        assert factura.suma_lineas == Decimal("8.75")
+
+    def test_no_descarta_conceptos_que_empiezan_por_tel(self):
+        from app.services.extraccion_pdf import _PATRON_CONTACTO
+
+        # "Telefonía móvil" y "Televisor" sí son conceptos facturables.
+        assert _PATRON_CONTACTO.match("tel. 910 000 000")
+        assert _PATRON_CONTACTO.match("tlf: 910000000")
+        assert not _PATRON_CONTACTO.match("telefonia movil fibra 600mb")
+        assert not _PATRON_CONTACTO.match("televisor 55 pulgadas")
+
+    def test_descarta_una_linea_imposible_para_el_total(self):
+        from app.services.extraccion_pdf import (
+            FacturaExtraida,
+            LineaExtraida,
+            _descartar_lineas_imposibles,
+        )
+
+        factura = FacturaExtraida(total=Decimal("47.79"))
+        factura.lineas = [
+            LineaExtraida(descripcion="Leche", total=Decimal("6.90")),
+            LineaExtraida(descripcion="Ref", total=Decimal("910000000.00")),
+        ]
+        _descartar_lineas_imposibles(factura)
+        assert len(factura.lineas) == 1
+        assert factura.avisos and "importe imposible" in factura.avisos[0]
+
+    def test_no_descarta_una_linea_algo_mayor_que_el_total(self):
+        # Con descuentos globales una línea puede superar el total sin ser basura.
+        from app.services.extraccion_pdf import (
+            FacturaExtraida,
+            LineaExtraida,
+            _descartar_lineas_imposibles,
+        )
+
+        factura = FacturaExtraida(total=Decimal("100.00"))
+        factura.lineas = [LineaExtraida(descripcion="Portátil", total=Decimal("150.00"))]
+        _descartar_lineas_imposibles(factura)
+        assert len(factura.lineas) == 1
+        assert not factura.avisos
+
+    def test_sin_total_no_se_descarta_nada(self):
+        from app.services.extraccion_pdf import (
+            FacturaExtraida,
+            LineaExtraida,
+            _descartar_lineas_imposibles,
+        )
+
+        factura = FacturaExtraida(total=None)
+        factura.lineas = [LineaExtraida(descripcion="Algo", total=Decimal("999999.00"))]
+        _descartar_lineas_imposibles(factura)
+        assert len(factura.lineas) == 1
