@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import mimetypes
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -23,6 +24,11 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
 )
 logger = logging.getLogger("app")
+
+# La tabla de tipos MIME de Python no conoce `.webmanifest`, así que el manifiesto
+# de la PWA saldría como `text/plain` y el navegador no lo aceptaría para instalar
+# la aplicación. Se registra aquí, antes de montar los estáticos.
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 
 @asynccontextmanager
@@ -94,6 +100,14 @@ CSP_DOCUMENTACION = (
 
 RUTAS_DE_DOCUMENTACION = frozenset({"/api/docs", "/api/openapi.json"})
 
+# Vite pone el hash del contenido en el nombre de cada asset, así que un fichero de
+# `/assets/` nunca cambia: cachearlo un año ahorra la mitad de las peticiones de una
+# recarga. Los demás estáticos (`index.html`, `sw.js`, el manifiesto, los iconos)
+# conservan su nombre entre despliegues, y ahí una caché larga es justo lo contrario
+# de lo que se quiere: dejaría al usuario con la versión anterior sin saberlo.
+CACHE_INMUTABLE = "public, max-age=31536000, immutable"
+CACHE_REVALIDAR = "no-cache"
+
 
 @app.middleware("http")
 async def cabeceras_de_seguridad(peticion: Request, siguiente) -> Response:  # noqa: ANN001
@@ -108,6 +122,8 @@ async def cabeceras_de_seguridad(peticion: Request, siguiente) -> Response:  # n
     )
     if settings.is_production:
         respuesta.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    if peticion.url.path.startswith("/assets/"):
+        respuesta.headers["Cache-Control"] = CACHE_INMUTABLE
     return respuesta
 
 
@@ -153,8 +169,12 @@ if settings.static_dir.is_dir():
         raiz = settings.static_dir.resolve()
         # Comprobación de traversal: candidato tiene que seguir dentro de la raíz.
         if candidato.is_file() and raiz in candidato.parents:
-            return FileResponse(candidato)
-        return FileResponse(indice, headers={"Cache-Control": "no-cache"})
+            # Estos ficheros mantienen el nombre entre despliegues, así que se
+            # revalidan siempre. Importa sobre todo en `sw.js`: un service worker
+            # servido de la caché deja al usuario en la versión vieja de la
+            # aplicación hasta que le caduque, y eso puede ser un día entero.
+            return FileResponse(candidato, headers={"Cache-Control": CACHE_REVALIDAR})
+        return FileResponse(indice, headers={"Cache-Control": CACHE_REVALIDAR})
 else:
     logger.warning(
         "No existe el directorio de estáticos (%s): solo se sirve la API. "
