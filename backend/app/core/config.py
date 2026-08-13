@@ -38,7 +38,11 @@ class Settings(BaseSettings):
     db_max_overflow: int = 20
 
     # --- CORS ---------------------------------------------------------------
-    cors_origins: list[str] = Field(default_factory=list)
+    # Se recibe como cadena, no como `list[str]`: pydantic-settings intenta
+    # interpretar cualquier campo de tipo lista como JSON antes de que llegue a
+    # ningún validador, así que "http://localhost:5173" hacía que la aplicación
+    # no arrancara y obligaba a escribir la variable en JSON.
+    cors_origins_crudo: str = Field(default="", validation_alias="CORS_ORIGINS")
 
     # --- Subida de facturas -------------------------------------------------
     upload_dir: Path = Path("./uploads")
@@ -56,13 +60,10 @@ class Settings(BaseSettings):
     # En producción el monolito sirve los estáticos de Vue desde este directorio.
     static_dir: Path = Path("./static")
 
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def _split_origins(cls, value: object) -> object:
-        """Acepta una lista o una cadena separada por comas."""
-        if isinstance(value, str):
-            return [origin.strip() for origin in value.split(",") if origin.strip()]
-        return value
+    @property
+    def cors_origins(self) -> list[str]:
+        """Orígenes permitidos, escritos separados por comas en el entorno."""
+        return [origen.strip() for origen in self.cors_origins_crudo.split(",") if origen.strip()]
 
     @field_validator("database_url")
     @classmethod
