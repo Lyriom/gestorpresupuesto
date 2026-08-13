@@ -19,9 +19,14 @@ Frontend (desde `frontend/`):
 
 ```bash
 npm run dev              # servidor de desarrollo en :5173, con proxy de /api a :8000
-npx vue-tsc --noEmit     # comprobación de tipos
+npx vue-tsc -b --force   # comprobación de tipos
 npm run build            # compilar a frontend/dist
 ```
+
+**No uses `vue-tsc --noEmit`**: el `tsconfig.json` de la raíz es de tipo
+«solution» (solo referencias a los otros), así que con `--noEmit` la herramienta
+acaba en silencio sin revisar ni un fichero y da la falsa sensación de que todo
+está bien. Hace falta `-b` para que compile los proyectos referenciados.
 
 Base de datos local: `docker compose up -d db` en la raíz. Hace falta un `.env`
 en la raíz (copia de `.env.example`) con `SECRET_KEY` y `DATABASE_URL`.

@@ -94,8 +94,12 @@ jobs:
       - name: Instalar dependencias
         run: npm ci
 
+      # `vue-tsc --noEmit` no comprueba nada aquí: el tsconfig.json de la raíz
+      # es de tipo "solution" (solo referencias), y con --noEmit la herramienta
+      # termina en silencio sin mirar un solo fichero. Verificado metiendo un
+      # error de tipos a propósito: --noEmit lo dejaba pasar y -b lo detecta.
       - name: Comprobar tipos
-        run: npx vue-tsc --noEmit
+        run: npx vue-tsc -b --force
 
       - name: Compilar
         run: npm run build
