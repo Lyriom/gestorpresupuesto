@@ -148,8 +148,74 @@ class PlantillaExtraccion:
         return bool(self.columnas or self.encabezados or self.patron_linea)
 
 
+#: Repeticiones que multiplican: `*`, `+` y `{n,m}`. La interrogación se queda
+#: fuera porque `(...)?` como mucho prueba dos caminos, no una explosión.
+#: Es un conjunto y no una cadena a propósito: con `"" in "*+{"` Python responde
+#: que sí, y el grupo que cierra al final del patrón se tomaría por repetido.
+_REPETICIONES = frozenset("*+{")
+
+
+def _repeticion_anidada(patron: str) -> bool:
+    r"""¿Hay un grupo que repite y cuyo contenido ya repetía?
+
+    Es la forma clásica que se atasca: `(\d+)+`, `(a*)*`, `([a-z]+){2,}`. Contra un
+    texto que *casi* encaja, el motor prueba todas las maneras de repartir los
+    caracteres entre las dos repeticiones, y son exponenciales en la longitud del
+    texto. Con cuarenta caracteres el `re` de Python ya no termina en toda una
+    tarde, y no hay manera de interrumpirlo: no acepta un límite de tiempo y el
+    hilo que lo ejecuta se queda ahí para siempre.
+
+    Se recorre el patrón a mano en vez de con otra expresión regular porque hay
+    que saber en cada momento si se está dentro de un `[...]` —donde un `+` es un
+    signo más y no una repetición— y si el carácter viene escapado.
+    """
+    aperturas: list[int] = []
+    # Por cada grupo abierto, si su contenido lleva ya una repetición.
+    repite_dentro: list[bool] = []
+    en_clase = False
+    escapado = False
+    i = 0
+    while i < len(patron):
+        caracter = patron[i]
+        if escapado:
+            escapado = False
+        elif caracter == "\\":
+            escapado = True
+        elif en_clase:
+            if caracter == "]":
+                en_clase = False
+        elif caracter == "[":
+            en_clase = True
+        elif caracter == "(":
+            aperturas.append(i)
+            repite_dentro.append(False)
+        elif caracter == ")":
+            if aperturas:
+                aperturas.pop()
+                anidada = repite_dentro.pop()
+                siguiente = patron[i + 1] if i + 1 < len(patron) else ""
+                if anidada and siguiente in _REPETICIONES:
+                    return True
+                # Un grupo que repite cuenta como repetición para el de fuera:
+                # `((a+)b)+` es igual de malo aunque el `+` esté un nivel más
+                # adentro.
+                if repite_dentro and (anidada or siguiente in _REPETICIONES):
+                    repite_dentro[-1] = True
+        elif caracter in _REPETICIONES and repite_dentro:
+            repite_dentro[-1] = True
+        i += 1
+    return False
+
+
 def compilar(patron: str, *, donde: str) -> re.Pattern[str]:
     """Compila una expresión de la plantilla dando un error legible si está mal."""
+    if _repeticion_anidada(patron):
+        raise PlantillaInvalida(
+            f"La expresión regular de «{donde}» tiene una repetición dentro de otra "
+            "(por ejemplo «(\\d+)+»). Con una factura que casi encajase se quedaría "
+            "calculando sin fin y esa factura no llegaría a leerse nunca. "
+            "Sobra uno de los dos: «(\\d+)» hace lo mismo."
+        )
     try:
         return re.compile(patron, re.IGNORECASE | re.MULTILINE)
     except re.error as exc:

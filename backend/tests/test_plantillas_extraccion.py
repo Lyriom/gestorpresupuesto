@@ -173,6 +173,56 @@ class TestValidacion:
     def test_una_plantilla_vacia_es_valida(self):
         assert plantillas.validar(PlantillaExtraccion(nombre="X")) == []
 
+    @pytest.mark.parametrize(
+        "patron",
+        [
+            r"(\d+)+",
+            r"(a*)*",
+            r"([a-z]+){2,}",
+            r"(.+?)+",
+            r"(\w+\s*)+",
+            r"((a+)b)+",  # la de dentro está un nivel más abajo y cuenta igual
+            r"(?:\d+)+",  # el grupo sin captura explota exactamente igual
+        ],
+    )
+    def test_una_repeticion_dentro_de_otra_se_rechaza(self, patron):
+        """La forma que se queda calculando sin fin, y que no se puede interrumpir."""
+        errores = plantillas.validar(PlantillaExtraccion(nombre="X", campos={"total": patron}))
+
+        assert len(errores) == 1
+        assert "repetición dentro de otra" in errores[0]
+
+    @pytest.mark.parametrize(
+        "patron",
+        [
+            r"Total:\s*([\d.,]+)",
+            r"(?P<description>.+?)\s+(?P<total>[\d.,]+)",
+            r"(\d{2}/\d{2}/\d{4})",
+            r"Importe\s+(?:total\s+)?([\d.,]+)\s*€",
+            r"([+*])",  # dentro de una clase, el más y el asterisco son literales
+            r"(a|b)+",  # alternativa de literales: no hay dos formas de repartir
+            r"(\d+)?",  # opcional: dos caminos, no una explosión
+            r"\(([\d.,]+)\)",  # paréntesis escapados: no abren grupo
+        ],
+    )
+    def test_las_expresiones_normales_no_se_rechazan(self, patron):
+        """Falsos positivos aquí serían peor que el problema: nadie podría escribir una."""
+        assert plantillas.validar(PlantillaExtraccion(nombre="X", campos={"total": patron})) == []
+
+    def test_la_repeticion_anidada_se_detecta_en_todas_las_partes(self):
+        """No solo en los campos: el patrón de fila y los ignorados también se aplican."""
+        errores = plantillas.validar(
+            PlantillaExtraccion(
+                nombre="X",
+                patron_linea=r"^(?P<description>(\w+\s*)+)$",
+                ignorar=[r"(\d+)+"],
+                encabezados={"total": r"(a*)*"},
+                patron_emisor=r"(x+)+",
+            )
+        )
+
+        assert len(errores) == 4
+
 
 class TestIdaYVuelta:
     def _completa(self) -> PlantillaExtraccion:
