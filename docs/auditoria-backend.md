@@ -35,15 +35,14 @@ cualquier suscripción dada de alta.
 
 Lo que hay que saber si solo se leen tres párrafos:
 
-1. **La tercera capa de tenencia no existe.** La migración
-   `20260813_0934_row_level_security.py` crea las políticas pero deja fuera
-   `FORCE ROW LEVEL SECURITY`, y la aplicación se conecta con el rol propietario
+1. ~~**La tercera capa de tenencia no existe.**~~ La migración
+   `20260813_0934_row_level_security.py` creaba las políticas pero dejaba fuera
+   `FORCE ROW LEVEL SECURITY`, y la aplicación se conectaba con el rol propietario
    de las tablas, que en PostgreSQL **está exento de sus propias políticas sin
-   `FORCE`**. La condición que la propia migración se puso para activarlo («cuando
-   la dependencia de sesión llame a `set_config`») ya se cumple desde
-   `deps.py:150`. Hoy solo protegen el filtro `household_id` de cada consulta y
-   las 44 claves ajenas compuestas. No se arregla desde el código: hace falta el
-   rol `app_rw` del despliegue (ver «Pendiente de despliegue»).
+   `FORCE`**. **Arreglado** en `9a1c4f27b8d5`: sí se arreglaba desde el código, sin
+   pedir un segundo usuario de base de datos, cambiando de rol con `SET LOCAL ROLE
+   app_rw`. Un `SELECT` sin `WHERE` sobre transacciones, temáticas, facturas o
+   presupuestos devolvía las filas de todos los hogares y ahora devuelve cero ajenas.
 2. **Dos escrituras cruzadas entre hogares, reales y explotables**, justamente en
    las dos columnas que **no** pueden tener clave ajena compuesta:
    `transactions.goal_id` (`POST /transfers`) e
@@ -119,7 +118,7 @@ siguiente.
 
 | Gravedad | Fichero:línea | Qué falla | Cómo se manifiesta | Estado |
 |---|---|---|---|---|
-| **Alta** | `alembic/versions/20260813_0934_row_level_security.py:9-20` | La tercera capa de tenencia está **inerte**: políticas creadas, `FORCE ROW LEVEL SECURITY` no, y la aplicación conecta como propietaria | Cualquier consulta a la que le falte el filtro `household_id` y que no esté cubierta por una FK compuesta es explotable directamente. Además `deps.py:150` fija `app.household_id` con `set_config(..., true)`, que es **transaccional**: hay endpoints que `commit()` y siguen leyendo (`categorias.py:456`, `objetivos.py:391`, `presupuestos.py:671`), así que encender `FORCE` sin tocar eso deja esas lecturas en cero filas | Pendiente (necesita el rol `app_rw` y una revisión de las lecturas post-`commit`) |
+| **Alta** | `alembic/versions/20260813_0934_row_level_security.py:9-20` | La tercera capa de tenencia está **inerte**: políticas creadas, `FORCE ROW LEVEL SECURITY` no, y la aplicación conecta como propietaria | Cualquier consulta a la que le falte el filtro `household_id` y que no esté cubierta por una FK compuesta es explotable directamente. Además `deps.py:150` fija `app.household_id` con `set_config(..., true)`, que es **transaccional**: hay endpoints que `commit()` y siguen leyendo (`categorias.py:456`, `objetivos.py:391`, `presupuestos.py:671`), así que encender `FORCE` sin tocar eso deja esas lecturas en cero filas | **Cerrada.** `9a1c4f27b8d5` crea el rol `app_rw` (`NOLOGIN`, sin `BYPASSRLS`), enciende `FORCE` en las 34 tablas y pasa las tres vistas a `security_invoker`; `deps.py` hace `SET LOCAL ROLE app_rw` y un oyente de `after_begin` en `app/db/session.py` reinstala el alcance tras cada `commit()`. No hizo falta un segundo usuario de base de datos. Cubierta por `tests/test_rls.py` |
 | **Alta** | `app/services/fusion.py:1137-1250` (reversión) | El deshacer sigue pisando sin condición lo que el usuario cambió **después** de la fusión cuando ese cambio no rompe ninguna restricción de la base: la columna `new_value` se guarda (`:390`) y no se usa jamás, y `SQL_CONFLICTO_POSTERIOR` solo detecta otras fusiones | Fusionar A→D, subir la asignación de D de 500 a 700 con `PATCH /budgets/.../allocations`, deshacer → D vuelve a 320 y reaparece la de A: los 200 € añadidos desaparecen y el total asignado del mes cambia, **sin ningún error**. La mitad destructiva del hallazgo (los 500) sí está cerrada, ver «Arreglados en la segunda vuelta» | Pendiente en la parte silenciosa (comparar con `new_value` y responder 409 es un cambio de contrato de RN-20, y hay columnas que un disparador reescribe después de la fusión: sin distinguirlas, la comprobación daría 409 espurios) |
 | **Media** | `app/services/fusion.py:646-666` (`SQL_REPARENTAR_HIJAS`) | La fusión recuelga las hijas sin validar RN-11 (profundidad ≤ 6), mientras `mover` (`categorias.py:755`) y `crear` sí lo hacen | Con el destino más profundo que el origen, la misma geometría da 422 `profundidad_maxima` por `move` y 200 por `merge`; si el salto pasa de 8 niveles, `refresh_category_paths` incumple `ck_categories_depth` y sale un 500 después de haberlo hecho todo | Pendiente |
 | **Media** | `app/services/fusion.py:700-709` | RN-20 dice que `?force=true` **reabre** el periodo cerrado, recalcula y lo vuelve a cerrar; el código solo avisa y escribe dentro del periodo cerrado sin tocar `closed_at` ni recalcular el arrastre en cascada | Si el `rollover_mode` de origen y destino difiere, el `carryover_in` del mes siguiente ya escrito no se recalcula y el disponible queda desalineado hasta que alguien reabre y recierra a mano | Pendiente |
@@ -257,6 +256,7 @@ contador enganchado al evento `before_cursor_execute` de SQLAlchemy
 (`test_auditoria_2.py`, fixture `contador_de_consultas`): esa misma fixture sirve
 para poner número a los dos N+1 que quedan pendientes.
 
-La fila de **row level security** no se ha tocado: dejar el RLS activo con `FORCE`
-exige crear un rol de base de datos aparte y cambiar cómo se conecta la
-aplicación. Es un cambio de infraestructura y se hará por separado.
+La fila de **row level security** ya está cerrada, y sin tocar el despliegue: en vez
+de un segundo usuario con su propia contraseña —que EasyPanel no da— la aplicación se
+*cambia* de rol con `SET LOCAL ROLE app_rw` en cada petición. Ver `tests/test_rls.py` y
+la cabecera de la migración `9a1c4f27b8d5`.

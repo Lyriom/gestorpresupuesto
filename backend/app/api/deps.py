@@ -9,11 +9,12 @@ la tenencia por descuido.
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Annotated, Literal
 
 from fastapi import Cookie, Depends, Header, Query, Request
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -24,7 +25,7 @@ from app.core.security import (
     csrf_tokens_match,
     decode_token,
 )
-from app.db.session import get_session
+from app.db.session import fijar_alcance, get_session, limpiar_alcance
 from app.models.hogar import HouseholdMember
 from app.models.usuario import User
 
@@ -119,12 +120,15 @@ async def alcance_hogar(
         uuid.UUID | None,
         Query(alias="household_id", description="Hogar sobre el que operar; el suyo por defecto."),
     ] = None,
-) -> AlcanceHogar:
-    """Resuelve el hogar activo y deja la sesión marcada para el RLS.
+) -> AsyncIterator[AlcanceHogar]:
+    """Resuelve el hogar activo y deja la sesión dentro del RLS.
 
     Si no se pide uno concreto se usa el hogar por defecto del usuario. La
     pertenencia se comprueba siempre contra `household_members`, así que pasar el
     identificador de un hogar ajeno da 403, no datos.
+
+    Es una dependencia con `yield` para poder devolver la sesión al rol propietario
+    cuando la petición acaba; el motivo está en `limpiar_alcance`.
     """
     consulta = select(HouseholdMember).where(
         HouseholdMember.user_id == usuario.id,
@@ -145,20 +149,23 @@ async def alcance_hogar(
             codigo="sin_hogar",
         )
 
-    # Tercera capa de tenencia: las políticas de row level security leen esta
-    # variable. `set_config(..., true)` la deja atada a la transacción en curso,
-    # así que no se filtra a la siguiente petición que reuse la conexión.
-    await sesion.execute(
-        text("SELECT set_config('app.household_id', :valor, true)"),
-        {"valor": str(miembro.household_id)},
-    )
+    # Tercera capa de tenencia. Dos pasos, y los dos son imprescindibles: fijar
+    # `app.household_id`, que es la variable que leen las políticas, y cambiar a
+    # `app_rw`, que es un rol al que las políticas **le aplican** (el propietario de
+    # las tablas está exento de las suyas sin `FORCE`, y con `FORCE` sigue exento si
+    # es superusuario). Los dos son transaccionales; de que sigan en pie tras cada
+    # `commit()` se encarga el oyente de `after_begin` de `app.db.session`.
+    await fijar_alcance(sesion, miembro.household_id)
 
-    return AlcanceHogar(
-        usuario=usuario,
-        household_id=miembro.household_id,
-        rol=miembro.role,
-        sesion=sesion,
-    )
+    try:
+        yield AlcanceHogar(
+            usuario=usuario,
+            household_id=miembro.household_id,
+            rol=miembro.role,
+            sesion=sesion,
+        )
+    finally:
+        await limpiar_alcance(sesion)
 
 
 Alcance = Annotated[AlcanceHogar, Depends(alcance_hogar)]

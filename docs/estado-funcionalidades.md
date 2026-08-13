@@ -94,10 +94,32 @@ el trabajo en curso queda verificado.
 | F-59 | Reglas editables en texto | ⬜ | Las reglas se editan por formulario |
 | F-60 | Comparativa de cesta | ✅ | `GET /baskets/comparison`, `GET /reports/basket` |
 
+## Aislamiento entre hogares
+
+Tres capas, todas activas y comprobadas:
+
+1. **Filtros de la aplicación**: todo endpoint que toca datos depende de
+   `AlcanceHogar`, que resuelve usuario, hogar y rol.
+2. **Claves ajenas compuestas** `(household_id, id)`: 44 en el esquema, que hacen
+   imposible que una fila apunte a datos de otro hogar. Las dos columnas que por
+   diseño no pueden llevarla se validan a mano en el endpoint.
+3. **Row level security con `FORCE`**: 34 tablas y las 3 vistas (con
+   `security_invoker`), y un rol `app_rw` sin `LOGIN`, sin `SUPERUSER` y sin
+   `BYPASSRLS` al que se cambia con `SET LOCAL ROLE` en cada transacción.
+
+Comprobado sobre una base con 421.874 categorías de muchos hogares: como
+propietario se ven todas; con el rol puesto y sin hogar fijado se ven **0**; con
+un hogar fijado, solo las 102 de ese hogar.
+
 ## Pendientes técnicos
 
 No son funcionalidades, pero conviene tenerlos a la vista. El detalle está en
 [auditoria-backend.md](auditoria-backend.md) y [auditoria-ui.md](auditoria-ui.md).
+
+- `mv_product_price_monthly` (vista materializada de precios) se queda **sin
+  permiso de lectura a propósito**: una vista materializada no admite
+  `security_invoker` ni política de seguridad, así que hoy nadie la usa. El día
+  que se necesite habrá que filtrarla antes de concederla.
 
 - Deshacer una fusión de temáticas **pisa las ediciones hechas después**: la
   comprobación silenciosa de RN-20 está a medias.

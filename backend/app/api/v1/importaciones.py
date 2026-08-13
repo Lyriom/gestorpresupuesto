@@ -31,7 +31,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from starlette.concurrency import run_in_threadpool
 
@@ -40,6 +40,7 @@ from app.api.v1.facturas import _motor, sanear_nombre
 from app.api.v1.productos import ahora, cargado, ref_comercio
 from app.core.config import settings
 from app.core.errors import AppError, Conflicto, NoEncontrado, ReglaDeNegocio
+from app.db.session import fijar_alcance
 from app.models.categoria import Category
 from app.models.comercio import Payee
 from app.models.cuenta import Account
@@ -249,10 +250,9 @@ async def analizar_lote(
 ) -> None:
     """Interpreta el fichero y llena `import_rows`. Nada más (RN-67)."""
     async with AsyncSession(bind=motor, expire_on_commit=False) as sesion:
-        await sesion.execute(
-            text("SELECT set_config('app.household_id', :valor, true)"),
-            {"valor": str(household_id)},
-        )
+        # Igual que en `procesar_factura`: hay `commit()` intermedios y después se
+        # sigue escribiendo, así que el alcance tiene que sobrevivirlos.
+        await fijar_alcance(sesion, household_id)
         lote = (
             await sesion.execute(
                 select(ImportBatch).where(
