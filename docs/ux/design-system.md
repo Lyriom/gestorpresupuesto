@@ -1389,7 +1389,7 @@ El caso de uso real es una persona de pie en la caja de un supermercado, con una
 
 | Componente | Patrón |
 |---|---|
-| BudgetBar | `section` con encabezado + `role="group"`; cada segmento `role="img"` con `aria-label` completo y `tabindex="0"`; asas `role="separator"` con `aria-valuenow` / `aria-valuetext`; resumen en `aria-describedby`; alternativa en tabla obligatoria |
+| BudgetBar | `section` con encabezado + `role="group"`; cada segmento `role="img"` con `aria-label` completo; **una sola parada de tabulación** con `tabindex` móvil (el segmento activo a `0` y el resto a `-1`), recorriendo los demás con `←`/`→`/`Inicio`/`Fin`, como en §6.5 — con quince temáticas, quince paradas de tabulación harían inservible el teclado; asas `role="separator"` con `aria-valuenow` / `aria-valuetext`; resumen en `aria-describedby`; alternativa en tabla obligatoria |
 | Tabla de datos | `<table>` nativa, `aria-sort` en `<th>`, expansor con `aria-expanded` + `aria-controls` |
 | Árbol de temáticas | `role="tree"` / `treeitem` con `aria-expanded`, `aria-level`, `aria-selected`; reordenación accesible con `Ctrl+↑/↓` y «mover a…» en el menú, además del arrastre |
 | Select / autocompletar | `role="combobox"` + `listbox` + `option`, `aria-activedescendant` |
