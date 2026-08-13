@@ -140,10 +140,12 @@ def exigir_cuota(peticion: Request, nombre: str, limite: int, ventana_segundos: 
     ip, _ = cliente_de(peticion)
     espera = limitador.espera(f"{nombre}:{ip or 'desconocida'}", limite, ventana_segundos)
     if espera is not None:
-        # `Retry-After` no se emite porque `AppError` no transporta cabeceras y
-        # `app/core/errors.py` está fuera de este módulo; la espera va en el texto.
+        segundos = max(1, round(espera))
+        # `Retry-After` es obligatorio en un 429 (§2.4): sin él el cliente no sabe
+        # cuánto esperar. `AppError` sí transporta cabeceras.
         raise DemasiadasPeticiones(
-            f"Demasiados intentos. Vuelve a probar en {max(1, round(espera))} segundos."
+            f"Demasiados intentos. Vuelve a probar en {segundos} segundos.",
+            cabeceras={"Retry-After": str(segundos)},
         )
 
 
@@ -358,6 +360,13 @@ def _bloqueado(usuario: User) -> bool:
     return usuario.locked_until is not None and usuario.locked_until > datetime.now(UTC)
 
 
+def _segundos_de_bloqueo(usuario: User) -> int:
+    """Lo que le queda de bloqueo, para el `Retry-After` del 429."""
+    if usuario.locked_until is None:
+        return 1
+    return max(1, round((usuario.locked_until - datetime.now(UTC)).total_seconds()))
+
+
 async def _anotar_fallo(sesion: Sesion, usuario: User) -> None:
     usuario.failed_login_count += 1
     if usuario.failed_login_count >= INTENTOS_ANTES_DE_BLOQUEO:
@@ -476,7 +485,8 @@ async def login(
         raise NoAutenticado(MENSAJE_CREDENCIALES, codigo="credenciales_invalidas")
 
     if _bloqueado(usuario):
-        raise DemasiadasPeticiones()
+        # El mensaje es el genérico: no dice si el correo existe (§2.4).
+        raise DemasiadasPeticiones(cabeceras={"Retry-After": str(_segundos_de_bloqueo(usuario))})
 
     if not verify_password(datos.password, usuario.password_hash) or not usuario.is_active:
         await _anotar_fallo(sesion, usuario)

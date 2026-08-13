@@ -24,6 +24,8 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import re
+import unicodedata
 import uuid
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
@@ -112,6 +114,18 @@ _LLANOS = "aaaaaeeeeiiiiooooouuuunc"
 
 #: Se leen los ficheros subidos a trozos para no cargar 20 MiB en memoria.
 _TROZO = 64 * 1024
+
+#: Nombres que Windows no admite como fichero, ni con extensión (RN-77).
+_RESERVADOS_WINDOWS = frozenset(
+    {
+        "con",
+        "prn",
+        "aux",
+        "nul",
+        *(f"com{numero}" for numero in range(1, 10)),
+        *(f"lpt{numero}" for numero in range(1, 10)),
+    }
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -1588,10 +1602,20 @@ def _tipo_por_firma(cabecera: bytes) -> tuple[str, str]:
 
 
 def _nombre_saneado(nombre: str | None) -> str:
-    """RN-77: el nombre original es solo metadato; nunca construye una ruta."""
-    limpio = (nombre or "adjunto").replace("\\", "/").split("/")[-1].strip()
-    limpio = "".join(caracter for caracter in limpio if caracter.isprintable())
-    return limpio[:200] or "adjunto"
+    """RN-77: el nombre original es solo metadato; nunca construye una ruta.
+
+    Se normaliza a NFKC y se recorta al juego seguro `[A-Za-z0-9 ._-]`, igual que
+    `facturas.sanear_nombre()`. Importa más de lo que parece: este nombre acaba
+    dentro de `Content-Disposition`, y una comilla doble ahí deja al cliente
+    interpretando parámetros que no ha escrito el servidor.
+    """
+    base = unicodedata.normalize("NFKC", nombre or "")
+    base = base.replace("\x00", "").replace("..", "").replace("/", " ").replace("\\", " ")
+    base = re.sub(r"[^A-Za-z0-9 ._-]", "", base)
+    base = re.sub(r"\s+", " ", base).strip(" .")[:120]
+    if not base or base.split(".")[0].lower() in _RESERVADOS_WINDOWS:
+        base = "adjunto"
+    return base
 
 
 @router.get("/transactions/{transaccion_id}/attachments", summary="Adjuntos de la transacción")
@@ -1684,12 +1708,18 @@ async def descargar_adjunto(
     ruta = settings.upload_dir / adjunto.storage_key
     if not ruta.is_file():
         raise NoEncontrado("El fichero ya no está en el almacén.")
-    # El nombre viaja entre comillas y saneado: nunca se usa para abrir nada.
+    # El nombre viaja entre comillas y saneado: nunca se usa para abrir nada. El
+    # tipo lo fija el servidor por la firma del fichero, nunca el cliente, y las
+    # dos cabeceras de endurecimiento evitan que un PDF servido «inline» ejecute
+    # nada en el origen de la aplicación (§8.3.8).
+    nombre = _nombre_saneado(adjunto.file_name)
     return FileResponse(
         ruta,
         media_type=adjunto.mime_type,
         headers={
-            "Content-Disposition": f'{disposition}; filename="{_nombre_saneado(adjunto.file_name)}"'
+            "Content-Disposition": f'{disposition}; filename="{nombre}"',
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox",
         },
     )
 

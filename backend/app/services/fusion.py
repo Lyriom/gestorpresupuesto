@@ -301,6 +301,17 @@ SQL_PREVIA = text(
     """
 )
 
+#: Lo que quedará asignado en el destino tras la fusión: la suma de las
+#: asignaciones de las origen y del destino, contando cada una una sola vez (§4.5).
+SQL_ASIGNADO_TOTAL = text(
+    """
+    SELECT COALESCE(sum(allocated_amount), 0) AS total
+      FROM budget_allocations
+     WHERE household_id = :hogar
+       AND category_id = ANY (cast(string_to_array(:categorias, ',') as uuid[]))
+    """
+)
+
 SQL_HIJAS_EN_CONFLICTO = text(
     """
     SELECT a.id AS hija, a.name AS nombre, b.id AS gemela
@@ -333,7 +344,6 @@ async def previsualizar(
         validar_par(origen, destino)
 
     resumen = ResumenFusion()
-    asignado_total = CERO
     periodos = 0
     for origen in origenes:
         parametros = {
@@ -351,7 +361,6 @@ async def previsualizar(
         resumen.products += fila.products
         resumen.payees += fila.payees
         periodos += fila.allocations
-        asignado_total += Decimal(str(fila.allocated_total))
         if opciones.move_children:
             resumen.children_moved += fila.children
 
@@ -377,9 +386,17 @@ async def previsualizar(
                 )
 
     resumen.budget_periods = periodos
-    # `allocated_total` cuenta cada asignación una vez, así que ya es la suma que
-    # quedará en el destino sin necesidad de restar colisiones.
-    resumen.allocations_merged = asignado_total
+    # Lo asignado se suma **una sola vez** sobre el conjunto completo: con varios
+    # orígenes, hacerlo dentro del bucle contaba las asignaciones del destino una
+    # vez por origen e inflaba la cifra que la pantalla de confirmación enseña.
+    asignado = await sesion.scalar(
+        SQL_ASIGNADO_TOTAL,
+        {
+            "hogar": alcance.household_id,
+            "categorias": ",".join(str(c.id) for c in [*origenes, destino]),
+        },
+    )
+    resumen.allocations_merged = Decimal(str(asignado or 0))
     return origenes, destino, resumen
 
 
@@ -788,6 +805,13 @@ async def _fusionar_par(
     # PASO 12 — Lápida. Conserva su `parent_id` para que la miga de pan de un
     # informe de hace dos años siga teniendo sentido.
     ranura, bloqueada = origen.color_slot, origen.is_locked
+    # Se lee el `archived_at` de antes: fusionar una temática **ya archivada** es
+    # legítimo, y anotar `None` como valor previo hacía que el deshacer la
+    # resucitase activa, con sus hijas archivadas y el árbol descuadrado.
+    archivada_antes = await sesion.scalar(
+        text("SELECT archived_at::text FROM categories WHERE id = :origen"),
+        {"origen": origen.id},
+    )
     await sesion.execute(
         text(
             """
@@ -805,7 +829,9 @@ async def _fusionar_par(
     )
     # El orden importa: al deshacer se recorre al revés, y `merged_into_id` debe
     # volver a NULL antes que `archived_at`.
-    await _anotar(sesion, operacion.id, hogar, "categories", origen.id, "archived_at", None, marca)
+    await _anotar(
+        sesion, operacion.id, hogar, "categories", origen.id, "archived_at", archivada_antes, marca
+    )
     await _anotar(
         sesion,
         operacion.id,
@@ -1051,12 +1077,19 @@ SQL_DESHACER_SPLITS = text(
     -- Importe y notas se pivotan a una fila por reparto: PostgreSQL aplica una
     -- sola de las modificaciones que una misma sentencia haga sobre la misma fila,
     -- así que dos CTE de UPDATE sobre el superviviente perderían una de las dos.
+    -- Con varios orígenes la misma fila se anota una vez por origen, así que hay
+    -- que quedarse con la anotación **más antigua** (`seq` menor), que es la que
+    -- guarda el valor de antes de la fusión. Ordenar por el valor —`max()` sobre
+    -- el texto del importe— elegía un estado intermedio y el reparto restaurado
+    -- no cuadraba con el importe de la transacción.
     por_fila AS (
         SELECT row_pk,
                bool_or(column_name = 'amount') AS toca_importe,
-               max(old_value #>> '{}') FILTER (WHERE column_name = 'amount') AS importe,
+               (array_agg(old_value #>> '{}' ORDER BY seq)
+                    FILTER (WHERE column_name = 'amount'))[1] AS importe,
                bool_or(column_name = 'notes')  AS toca_notas,
-               max(old_value #>> '{}') FILTER (WHERE column_name = 'notes')  AS notas
+               (array_agg(old_value #>> '{}' ORDER BY seq)
+                    FILTER (WHERE column_name = 'notes'))[1] AS notas
           FROM cambios WHERE change_type = 'update'
          GROUP BY row_pk
     ),
@@ -1087,15 +1120,28 @@ def _sql_restaurar_borradas(tabla: str) -> str:
 
 
 def _sql_revertir_columna(tabla: str, columna: str) -> str:
+    """Devuelve una columna a su valor de antes de la fusión.
+
+    El `DISTINCT ON` no es cosmético: una fusión con varios orígenes anota la misma
+    fila del destino una vez por origen, y sin desempate `UPDATE ... FROM` elige
+    una cualquiera de las anotaciones —PostgreSQL no promete cuál—, con lo que la
+    asignación de presupuesto podía quedar en un valor intermedio. La anotación de
+    `seq` menor es la única que guarda el valor original.
+    """
     _validar_destino(tabla, columna)
     tipo = COLUMNAS[(tabla, columna)]
     valor = "c.old_value" if (tabla, columna) in COLUMNAS_JSONB else f"{DESENVOLVER}::{tipo}"
     return f"""
         UPDATE {tabla} d SET {columna} = {valor}
-          FROM merge_operation_changes c
-         WHERE c.merge_operation_id = ANY (cast(string_to_array(:ops, ',') as uuid[]))
-           AND c.table_name = '{tabla}' AND c.change_type = 'update'
-           AND c.column_name = '{columna}' AND d.id = c.row_pk
+          FROM (
+            SELECT DISTINCT ON (row_pk) row_pk, old_value
+              FROM merge_operation_changes
+             WHERE merge_operation_id = ANY (cast(string_to_array(:ops, ',') as uuid[]))
+               AND table_name = '{tabla}' AND change_type = 'update'
+               AND column_name = '{columna}'
+             ORDER BY row_pk, seq
+          ) c
+         WHERE d.id = c.row_pk
     """
 
 
@@ -1116,6 +1162,11 @@ async def deshacer(alcance: AlcanceHogar, operacion_id: uuid.UUID) -> ResultadoF
                 MergeOperation.id == operacion_id,
                 MergeOperation.household_id == hogar,
                 MergeOperation.entity_type == "category",
+                # Una operación hija no se deshace por su cuenta: se deshace con su
+                # madre, que es la unidad atómica. Aceptarla revertía media fusión y
+                # dejaba la raíz en `done`, de modo que el siguiente deshacer de la
+                # raíz reinsertaba filas ya restauradas y acababa en 500.
+                MergeOperation.parent_merge_operation_id.is_(None),
             )
             .limit(1)
             .with_for_update()

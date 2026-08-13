@@ -19,7 +19,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from io import BytesIO
 from typing import Literal
 
@@ -69,7 +69,8 @@ class LineaExtraida:
         c, p, t = self.cantidad, self.precio_unitario, self.total
 
         if c is not None and p is not None and t is None:
-            self.total = (c * p).quantize(CENTIMO)
+            # HALF_UP: en un empate (2,1650 €) el importe sube, como en la factura.
+            self.total = (c * p).quantize(CENTIMO, rounding=ROUND_HALF_UP)
             self.confianza = min(self.confianza, 0.8)
         elif c is not None and t is not None and p is None:
             if c != 0:

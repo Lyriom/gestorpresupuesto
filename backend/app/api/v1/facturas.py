@@ -25,7 +25,7 @@ import unicodedata
 import uuid as uuidlib
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -69,7 +69,7 @@ from app.models.alerta import Alert
 from app.models.categoria import Category
 from app.models.comercio import Payee
 from app.models.cuenta import Account
-from app.models.factura import Invoice, InvoiceLine
+from app.models.factura import ExtractionTemplate, Invoice, InvoiceLine
 from app.models.producto import Product, ProductPrice
 from app.models.transaccion import Transaction, TransactionSplit
 from app.schemas.categoria import CategoriaRefRespuesta
@@ -164,6 +164,28 @@ def sanear_nombre(nombre: str | None) -> str:
     if not base.lower().endswith(".pdf"):
         base = f"{base}.pdf"
     return base
+
+
+async def _plantilla_del_hogar(alcance: AlcanceHogar, template_id: uuidlib.UUID | None) -> None:
+    """RN-01: la plantilla es del hogar o de la instalación, nunca de otro hogar.
+
+    `extraction_templates.household_id` es nulable (las plantillas de serie son de
+    la instalación), así que esta tabla no puede tener clave ajena compuesta: si
+    aquí no se comprueba la tenencia, no la comprueba nadie.
+    """
+    if template_id is None:
+        return
+    existe = await alcance.sesion.scalar(
+        select(ExtractionTemplate.id).where(
+            ExtractionTemplate.id == template_id,
+            or_(
+                ExtractionTemplate.household_id.is_(None),
+                ExtractionTemplate.household_id == alcance.household_id,
+            ),
+        )
+    )
+    if existe is None:
+        raise NoEncontrado("Esa plantilla de extracción no existe.")
 
 
 def ruta_de(clave: str) -> Path:
@@ -783,6 +805,7 @@ async def subir(
         cuenta = await alcance.sesion.get(Account, account_id)
         if cuenta is None or cuenta.household_id != alcance.household_id:
             raise NoEncontrado("Esa cuenta no existe.")
+    await _plantilla_del_hogar(alcance, template_id)
 
     clave = clave_de_almacenamiento(alcance.usuario.id, date.today())
     factura = Invoice(
@@ -1286,7 +1309,11 @@ def _recalcular(linea: InvoiceLine, tocados: set[str]) -> None:
     """
     if {"quantity", "unit_price"} & tocados and "total" not in tocados:
         if linea.quantity is not None and linea.unit_price is not None:
-            linea.line_total = (linea.quantity * linea.unit_price).quantize(CENTIMO)
+            # HALF_UP y no el redondeo bancario del contexto: 10 kWh a 0,2165 €
+            # son 2,17 €, no 2,16 €, y es lo que hace la base al guardar.
+            linea.line_total = (linea.quantity * linea.unit_price).quantize(
+                CENTIMO, rounding=ROUND_HALF_UP
+            )
     elif (
         "total" in tocados
         and "unit_price" not in tocados
@@ -2220,6 +2247,7 @@ async def reprocesar(
     factura = await _factura_o_404(alcance, invoice_id)
     _exigir_revisable(factura)
     if datos.template_id is not None:
+        await _plantilla_del_hogar(alcance, datos.template_id)
         factura.extraction_template_id = datos.template_id
     factura.status = EstadoFactura.PROCESSING.value
     factura.error_message = None

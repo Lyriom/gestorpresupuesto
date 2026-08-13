@@ -8,7 +8,7 @@ con punto decimal se lee como un error de la aplicación.
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 CERO = Decimal("0")
 
@@ -23,8 +23,13 @@ def _con_separadores(entero: str) -> str:
 
 
 def numero(valor: Decimal, decimales: int = 2) -> str:
-    """`1.234,56` — separador de miles con punto y decimal con coma."""
-    entero, _, parte_decimal = f"{abs(valor):.{decimales}f}".partition(".")
+    """`1.234,56` — separador de miles con punto y decimal con coma.
+
+    El redondeo es `ROUND_HALF_UP`: el formateo con `f"{…:.2f}"` usa el contexto
+    decimal, que en Python redondea al par (2,665 € se leía «2,66 €»).
+    """
+    redondeado = abs(valor).quantize(Decimal(1).scaleb(-decimales), rounding=ROUND_HALF_UP)
+    entero, _, parte_decimal = f"{redondeado:.{decimales}f}".partition(".")
     texto = _con_separadores(entero)
     if parte_decimal:
         texto = f"{texto},{parte_decimal}"

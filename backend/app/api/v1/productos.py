@@ -26,6 +26,7 @@ from sqlalchemy import Select, delete, func, inspect, or_, select, text, update
 
 from app.api.deps import Alcance, AlcanceEscritura, AlcanceHogar, verificar_csrf
 from app.core.errors import Conflicto, NoEncontrado, ReglaDeNegocio
+from app.models.categoria import Category
 from app.models.comercio import Payee
 from app.models.factura import InvoiceLine
 from app.models.fusion import MergeOperation, MergeOperationChange
@@ -361,6 +362,7 @@ async def crear_producto(
     origen: str = "manual",
 ) -> Product:
     """Crea un producto con su clave de agrupación. 409 si la clave ya existe."""
+    await _tematica_del_hogar(alcance, datos.default_category_id)
     normalizada = normalizada_con_tamanyo(
         datos.name,
         size_value=datos.size_value,
@@ -989,8 +991,6 @@ def respuesta_producto(
 async def _categorias_ref(
     sesion: Any, household_id: uuidlib.UUID, ids: list[uuidlib.UUID]
 ) -> dict[uuidlib.UUID, CategoriaRefRespuesta]:
-    from app.models.categoria import Category
-
     limpios = [identificador for identificador in ids if identificador]
     if not limpios:
         return {}
@@ -1012,6 +1012,35 @@ async def _umbral_subida(sesion: Any, household_id: uuidlib.UUID) -> Decimal:
         await sesion.execute(select(Household.price_alert_pct).where(Household.id == household_id))
     ).scalar_one_or_none()
     return valor if valor is not None else Decimal("5.00")
+
+
+async def _tematica_del_hogar(alcance: AlcanceHogar, categoria_id: uuidlib.UUID | None) -> None:
+    """RN-01: una temática de otro hogar no se puede asignar a un producto.
+
+    Sin esta comprobación la única defensa era la clave ajena compuesta
+    `(household_id, category_id)`, que salta en el `COMMIT` y el usuario recibe un
+    500 en lugar del 404 que manda RN-02.
+    """
+    if categoria_id is None:
+        return
+    existe = await alcance.sesion.scalar(
+        select(Category.id).where(
+            Category.household_id == alcance.household_id, Category.id == categoria_id
+        )
+    )
+    if existe is None:
+        raise NoEncontrado("La temática no existe.")
+
+
+async def _comercio_del_hogar(alcance: AlcanceHogar, comercio_id: uuidlib.UUID | None) -> None:
+    """Lo mismo para el comercio de una observación de precio."""
+    if comercio_id is None:
+        return
+    existe = await alcance.sesion.scalar(
+        select(Payee.id).where(Payee.household_id == alcance.household_id, Payee.id == comercio_id)
+    )
+    if existe is None:
+        raise NoEncontrado("El comercio no existe.")
 
 
 async def _producto_o_404(alcance: AlcanceHogar, product_id: uuidlib.UUID) -> Product:
@@ -1564,7 +1593,9 @@ async def actualizar_producto(
     if "is_archived" in campos:
         producto.archived_at = ahora() if campos.pop("is_archived") else None
     if "default_category_id" in campos:
-        producto.category_id = campos.pop("default_category_id")
+        nueva = campos.pop("default_category_id")
+        await _tematica_del_hogar(alcance, nueva)
+        producto.category_id = nueva
     if "note" in campos:
         producto.notes = campos.pop("note")
     for campo in ("name", "brand", "barcode"):
@@ -1975,6 +2006,7 @@ async def _pagina_de_precios(
 async def crear_precio(alcance: AlcanceEscritura, datos: PrecioCrear) -> PrecioRespuesta:
     """Un escaparate, una etiqueta del súper: precio sin factura detrás."""
     producto = await _producto_o_404(alcance, datos.product_id)
+    await _comercio_del_hogar(alcance, datos.payee_id)
     repetido = (
         await alcance.sesion.execute(
             select(ProductPrice.id).where(
@@ -2029,7 +2061,9 @@ async def actualizar_precio(
     if "total" in campos:
         observacion.line_total = campos.pop("total")
     if "payee_id" in campos:
-        observacion.payee_id = campos.pop("payee_id")
+        nuevo = campos.pop("payee_id")
+        await _comercio_del_hogar(alcance, nuevo)
+        observacion.payee_id = nuevo
 
     variacion = await calcular_variacion(
         alcance.sesion,

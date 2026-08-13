@@ -44,6 +44,13 @@ class Settings(BaseSettings):
     # no arrancara y obligaba a escribir la variable en JSON.
     cors_origins_crudo: str = Field(default="", validation_alias="CORS_ORIGINS")
 
+    # --- Proxy de confianza -------------------------------------------------
+    # `X-Forwarded-For` lo puede escribir cualquiera, así que solo se cree si la
+    # conexión llega de uno de estos pares (§2.4). Vacío significa «no hay proxy»:
+    # se usa la IP de la conexión. `*` confía en quien sea y solo vale si el
+    # contenedor no está expuesto directamente a internet.
+    trusted_proxies_crudo: str = Field(default="", validation_alias="TRUSTED_PROXIES")
+
     # --- Subida de facturas -------------------------------------------------
     upload_dir: Path = Path("./uploads")
     max_upload_mb: int = 20
@@ -64,6 +71,11 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         """Orígenes permitidos, escritos separados por comas en el entorno."""
         return [origen.strip() for origen in self.cors_origins_crudo.split(",") if origen.strip()]
+
+    @property
+    def trusted_proxies(self) -> list[str]:
+        """Pares de los que se acepta `X-Forwarded-For`, separados por comas."""
+        return [par.strip() for par in self.trusted_proxies_crudo.split(",") if par.strip()]
 
     @field_validator("database_url")
     @classmethod

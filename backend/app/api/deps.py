@@ -16,6 +16,7 @@ from fastapi import Cookie, Depends, Header, Query, Request
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.errors import Conflicto, NoAutenticado, SinPermiso
 from app.core.security import (
     CSRF_COOKIE_NAME,
@@ -198,14 +199,32 @@ async def paginacion(
 PaginacionActual = Annotated[Paginacion, Depends(paginacion)]
 
 
+def _es_proxy_de_confianza(peticion: Request) -> bool:
+    """Si el par de la conexión está en `TRUSTED_PROXIES`.
+
+    Cualquiera puede escribir `X-Forwarded-For`, así que sin esta comprobación el
+    límite de tasa por IP se esquiva mandando una cabecera distinta en cada
+    intento (§2.4).
+    """
+    confiables = settings.trusted_proxies
+    if not confiables:
+        return False
+    if "*" in confiables:
+        return True
+    return bool(peticion.client and peticion.client.host in confiables)
+
+
 def cliente_de(peticion: Request) -> tuple[str | None, str | None]:
     """Dirección IP y agente de usuario, para la lista de sesiones activas.
 
-    Se mira `X-Forwarded-For` porque en EasyPanel la aplicación está detrás de un
-    proxy y la IP directa sería siempre la del proxy.
+    En EasyPanel la aplicación está detrás de un proxy y la IP directa sería
+    siempre la suya, así que se mira `X-Forwarded-For`, pero **solo** cuando la
+    conexión viene de un proxy declarado de confianza.
     """
-    reenviada = peticion.headers.get("x-forwarded-for")
-    ip = reenviada.split(",")[0].strip() if reenviada else None
+    ip = None
+    if _es_proxy_de_confianza(peticion):
+        reenviada = peticion.headers.get("x-forwarded-for")
+        ip = reenviada.split(",")[0].strip() if reenviada else None
     if not ip and peticion.client:
         ip = peticion.client.host
     agente = peticion.headers.get("user-agent")

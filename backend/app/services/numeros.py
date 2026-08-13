@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 # Unidades habituales en facturas de suministros y de supermercado.
 UNIDADES = {
@@ -161,9 +161,15 @@ def parsear_decimal(texto: str | None) -> Decimal | None:
 
 
 def parsear_importe(texto: str | None) -> Decimal | None:
-    """Como `parsear_decimal` pero redondeando a los dos decimales del dinero."""
+    """Como `parsear_decimal` pero redondeando a los dos decimales del dinero.
+
+    Con `ROUND_HALF_UP` y no con el redondeo bancario que Python trae por defecto:
+    en un empate, 12,345 € son 12,35 € en cualquier factura española, y es también
+    lo que hace PostgreSQL al guardar en `numeric(14,2)`. Con el modo por defecto
+    el mismo importe se redondeaba distinto según quién lo cuantizase.
+    """
     valor = parsear_decimal(texto)
-    return None if valor is None else valor.quantize(Decimal("0.01"))
+    return None if valor is None else valor.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def numeros_de(texto: str) -> list[Decimal]:

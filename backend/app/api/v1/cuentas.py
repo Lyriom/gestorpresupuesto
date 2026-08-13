@@ -27,7 +27,7 @@ from app.core.config import settings
 from app.core.errors import Conflicto, NoEncontrado, ReglaDeNegocio
 from app.models.categoria import Category
 from app.models.cuenta import Account, LoanTerms, Reconciliation
-from app.models.recurrente import RecurringOccurrence
+from app.models.recurrente import RecurringOccurrence, RecurringRule
 from app.models.transaccion import Transaction
 from app.schemas.comun import Pagina
 from app.schemas.cuenta import (
@@ -640,11 +640,17 @@ async def saldo(
     cuenta = await _cuenta_o_404(alcance, cuenta_id)
     corte = as_of or date.today()
     total, conciliado = await _saldo_a_fecha(alcance, cuenta, corte)
+    # Los vencimientos son de **esta** cuenta: la cuenta no vive en la ocurrencia
+    # sino en su regla, así que hace falta el join. Sin él, la proyección de F-47
+    # daba el mismo pendiente para todas las cuentas del hogar.
     pendiente = await alcance.sesion.scalar(
-        select(func.coalesce(func.sum(RecurringOccurrence.expected_amount), 0)).where(
+        select(func.coalesce(func.sum(RecurringOccurrence.expected_amount), 0))
+        .join(RecurringRule, RecurringRule.id == RecurringOccurrence.recurring_rule_id)
+        .where(
             RecurringOccurrence.household_id == alcance.household_id,
             RecurringOccurrence.status == "pending",
             RecurringOccurrence.due_on <= corte,
+            RecurringRule.account_id == cuenta.id,
         )
     )
     return CuentaSaldoRespuesta(
@@ -856,7 +862,10 @@ async def amortizacion(
         )
 
     plazo = min(condiciones.term_months, months or condiciones.term_months)
-    tipo_mensual = _dinero(condiciones.annual_rate) / Decimal(1200)
+    # El tipo **no** es dinero: `annual_rate` es `Numeric(7,4)` y cuantizarlo a
+    # céntimos se comía sus dos últimos decimales (un 2,7550 % pasaba a 2,76 % y el
+    # cuadro salía con 88,93 € más de intereses en un préstamo a 20 años).
+    tipo_mensual = Decimal(str(condiciones.annual_rate)) / Decimal(1200)
     cuota = (
         _dinero(condiciones.payment_amount)
         if condiciones.payment_amount is not None

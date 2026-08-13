@@ -26,12 +26,14 @@ from app.api.deps import Alcance, AlcanceEscritura, AlcanceHogar, verificar_csrf
 from app.api.v1.transacciones import (
     contar,
     cuenta_del_hogar,
+    del_hogar,
     ref_cuenta,
     tematica_del_hogar,
 )
 from app.core.config import settings
 from app.core.errors import NoEncontrado, ReglaDeNegocio
 from app.models.cuenta import Account
+from app.models.objetivo import Goal
 from app.models.transaccion import Transaction
 from app.schemas.comun import Pagina
 from app.schemas.transaccion import (
@@ -339,6 +341,11 @@ async def crear_transferencia(
     """Dos patas sin temática, que no cuentan como gasto ni como ingreso (RN-21)."""
     origen = await cuenta_del_hogar(alcance, datos.from_account_id)
     destino = await cuenta_del_hogar(alcance, datos.to_account_id)
+    # `transactions.goal_id` no tiene clave ajena compuesta (`goals` no declara
+    # `UNIQUE (household_id, id)`), así que este 404 es lo único que impide colgar
+    # una transferencia del fondo de otro hogar.
+    if datos.goal_id is not None:
+        await del_hogar(alcance, Goal, datos.goal_id, mensaje="Ese fondo no existe.")
     grupo = await crear_patas(
         alcance,
         origen=origen,
