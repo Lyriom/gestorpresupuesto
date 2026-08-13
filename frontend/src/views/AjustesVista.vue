@@ -293,14 +293,14 @@ watch(() => sesion.usuario?.id, volcarPerfil)
                 variante="secundaria"
                 tamanyo="sm"
                 :icono="Upload"
-                deshabilitado
+                @click="router.push({ name: 'importaciones' })"
               >
                 Importar
               </BotonBase>
             </div>
             <p class="ayuda">
-              La importación de extractos (CSV, OFX y QIF) tiene su propio flujo de revisión y
-              todavía no está montada en la interfaz.
+              La importación de extractos (CSV, OFX y QIF) tiene su propio flujo: se revisa fila a
+              fila antes de crear nada y el lote se puede deshacer entero.
             </p>
 
             <p v-if="ajustes.almacenamiento" class="ayuda num">

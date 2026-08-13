@@ -145,6 +145,19 @@ const rutas: RouteRecordRaw[] = [
     meta: { layout: 'app', titulo: 'Ajustes', nav: 'ajustes' },
   },
   {
+    path: '/importar',
+    name: 'importaciones',
+    component: () => import('@/views/ImportarMovimientosVista.vue'),
+    meta: { layout: 'app', titulo: 'Importar movimientos', nav: 'ajustes' },
+  },
+  {
+    // El lote va en la URL: recargar la página no pierde la importación a medias.
+    path: '/importar/:id',
+    name: 'importacion',
+    component: () => import('@/views/ImportarMovimientosVista.vue'),
+    meta: { layout: 'app', titulo: 'Importar movimientos', nav: 'ajustes' },
+  },
+  {
     // Ruta oculta: la galería de componentes sirve para revisar el diseño.
     path: '/galeria',
     name: 'galeria',
