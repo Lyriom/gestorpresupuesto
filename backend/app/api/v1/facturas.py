@@ -25,7 +25,7 @@ import unicodedata
 import uuid as uuidlib
 from dataclasses import dataclass
 from datetime import date
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -44,6 +44,7 @@ from fastapi import (
 from fastapi.responses import FileResponse
 from sqlalchemy import delete, func, insert, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from sqlalchemy.orm import selectinload
 from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import Alcance, AlcanceEscritura, AlcanceHogar, verificar_csrf
@@ -105,6 +106,7 @@ from app.services.extraccion_pdf import (
     extraer_factura,
     validar_pdf,
 )
+from app.services.formato import CENTIMO, CUATRO_DECIMALES, cuantizar
 from app.services.normalizacion import clave_agrupacion, normalizar_descripcion, sin_acentos
 from app.services.precios import variacion as variacion_de_precio
 
@@ -132,7 +134,6 @@ RESERVADOS_WINDOWS = frozenset(
     }
 )
 
-CENTIMO = Decimal("0.01")
 CERO = Decimal("0.00")
 
 #: Formas jurídicas que se quitan al normalizar el emisor para detectar duplicados.
@@ -290,8 +291,8 @@ async def _lineas_de(alcance: AlcanceHogar, factura: Invoice) -> list[InvoiceLin
 
 def suma_de(lineas: list[InvoiceLine]) -> Decimal:
     """Suma de las líneas que van a generar gasto (no excluidas)."""
-    return sum((linea.line_total or CERO for linea in lineas if not linea.excluded), CERO).quantize(
-        CENTIMO
+    return cuantizar(
+        sum((linea.line_total or CERO for linea in lineas if not linea.excluded), CERO)
     )
 
 
@@ -602,8 +603,7 @@ def respuesta_linea(
         linea.quantity is not None
         and linea.unit_price is not None
         and linea.line_total is not None
-        and abs((linea.quantity * linea.unit_price).quantize(CENTIMO) - linea.line_total)
-        > TOLERANCIA
+        and abs(cuantizar(linea.quantity * linea.unit_price) - linea.line_total) > TOLERANCIA
     ):
         avisos.append("Cantidad × precio no da el importe de la línea.")
 
@@ -644,20 +644,36 @@ async def respuesta_factura(
     factura: Invoice,
     *,
     incluir_lineas: bool = False,
+    lineas: list[InvoiceLine] | None = None,
+    comercios: dict[Any, Payee] | None = None,
+    relacionados: tuple[dict[Any, Product], dict[Any, Category]] | None = None,
 ) -> FacturaRespuesta:
+    """Cabecera de una factura, con sus líneas si se piden.
+
+    Los tres últimos parámetros son la salida del N+1 del listado: cuando quien
+    llama va a construir muchas respuestas seguidas, resuelve las líneas, los
+    comercios y los productos/temáticas de toda la página **de una vez** y los
+    pasa aquí. Si no se pasan, cada uno se busca por su cuenta, que es lo que
+    necesita el detalle de una sola factura.
+    """
     await cargado(alcance.sesion, factura)
-    lineas = await _lineas_de(alcance, factura)
+    if lineas is None:
+        lineas = await _lineas_de(alcance, factura)
     suma = suma_de(lineas)
     descuadre = None
     if factura.total_amount is not None and not cuadra(factura, lineas):
-        descuadre = (suma - factura.total_amount).quantize(CENTIMO)
+        descuadre = cuantizar(suma - factura.total_amount)
     comercio = None
     if factura.payee_id:
-        comercio = await alcance.sesion.get(Payee, factura.payee_id)
+        comercio = (
+            comercios.get(factura.payee_id)
+            if comercios is not None
+            else await alcance.sesion.get(Payee, factura.payee_id)
+        )
 
     detalle: list[LineaFacturaRespuesta] = []
     if incluir_lineas:
-        productos, categorias = await _relacionados(alcance, lineas)
+        productos, categorias = relacionados or await _relacionados(alcance, lineas)
         detalle = [
             respuesta_linea(
                 linea,
@@ -734,6 +750,21 @@ async def _relacionados(
             ).scalars()
         }
     return productos, categorias
+
+
+async def _comercios_de(alcance: AlcanceHogar, facturas: list[Invoice]) -> dict[Any, Payee]:
+    """Los comercios de toda la página, en una consulta y no en una por factura."""
+    ids = {factura.payee_id for factura in facturas if factura.payee_id}
+    if not ids:
+        return {}
+    return {
+        comercio.id: comercio
+        for comercio in (
+            await alcance.sesion.execute(
+                select(Payee).where(Payee.household_id == alcance.household_id, Payee.id.in_(ids))
+            )
+        ).scalars()
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -883,16 +914,37 @@ async def listar(
         if columna is not None:
             consulta = consulta.order_by(columna.desc() if descendente else columna.asc())
 
+    # `selectinload` de las líneas: `respuesta_factura()` las necesita siempre para
+    # el recuento, la suma y el descuadre, y sin esto era una consulta por factura
+    # (con `size=50`, ~150 consultas por página).
     facturas = list(
         (
             await alcance.sesion.execute(
-                consulta.order_by(Invoice.id).offset(filtro.desplazamiento).limit(filtro.size)
+                consulta.order_by(Invoice.id)
+                .offset(filtro.desplazamiento)
+                .limit(filtro.size)
+                .options(selectinload(Invoice.lines))
             )
-        ).scalars()
+        )
+        .scalars()
+        .unique()
     )
     incluir = "lines" in filtro.include
+    # Comercios y —si se piden las líneas— productos y temáticas de **toda** la
+    # página de una vez, en lugar de uno por factura y dos por línea.
+    comercios = await _comercios_de(alcance, facturas)
+    todas_las_lineas = [linea for factura in facturas for linea in factura.lines]
+    relacionados = await _relacionados(alcance, todas_las_lineas) if incluir else ({}, {})
     filas = [
-        await respuesta_factura(alcance, factura, incluir_lineas=incluir) for factura in facturas
+        await respuesta_factura(
+            alcance,
+            factura,
+            incluir_lineas=incluir,
+            lineas=list(factura.lines),
+            comercios=comercios,
+            relacionados=relacionados,
+        )
+        for factura in facturas
     ]
     return Pagina.crear(filas, page=filtro.page, size=filtro.size, total=total)
 
@@ -1189,7 +1241,7 @@ async def _respuesta_lineas(
     suma = suma_de(lineas)
     descuadre = None
     if factura.total_amount is not None and not cuadra(factura, lineas):
-        descuadre = (suma - factura.total_amount).quantize(CENTIMO)
+        descuadre = cuantizar(suma - factura.total_amount)
     # Una línea sin temática solo bloquea si tampoco hay ninguna sugerida: la
     # confirmación puede tomar la sugerida o la que se elija por defecto.
     huerfanas = sum(
@@ -1311,16 +1363,14 @@ def _recalcular(linea: InvoiceLine, tocados: set[str]) -> None:
         if linea.quantity is not None and linea.unit_price is not None:
             # HALF_UP y no el redondeo bancario del contexto: 10 kWh a 0,2165 €
             # son 2,17 €, no 2,16 €, y es lo que hace la base al guardar.
-            linea.line_total = (linea.quantity * linea.unit_price).quantize(
-                CENTIMO, rounding=ROUND_HALF_UP
-            )
+            linea.line_total = cuantizar(linea.quantity * linea.unit_price)
     elif (
         "total" in tocados
         and "unit_price" not in tocados
         and linea.quantity
         and linea.line_total is not None
     ):
-        linea.unit_price = (linea.line_total / linea.quantity).quantize(Decimal("0.0001"))
+        linea.unit_price = cuantizar(linea.line_total / linea.quantity, CUATRO_DECIMALES)
 
     calculo = LineaExtraida(
         descripcion=linea.raw_description,
@@ -1677,8 +1727,17 @@ def _repartir(
             Reparto(category_id=categoria, importe=-linea.line_total, invoice_line_id=linea.id)
         )
 
-    resto = (-total - sum((reparto.importe for reparto in repartos), CERO)).quantize(CENTIMO)
+    resto = cuantizar(-total - sum((reparto.importe for reparto in repartos), CERO))
     if resto != CERO:
+        if defecto is None and not repartos:
+            # Todas las líneas excluidas y sin temática por defecto: no hay ninguna
+            # a la que imputar el importe. Antes se cogía `repartos[0]` de la lista
+            # vacía y salía un `IndexError` que el manejador convertía en un 500.
+            raise ReglaDeNegocio(
+                "No hay ninguna línea que genere gasto: indica una temática por "
+                "defecto para imputar el importe de la factura.",
+                codigo="datos_invalidos",
+            )
         categoria = defecto or repartos[0].category_id
         repartos.append(Reparto(category_id=categoria, importe=resto, invoice_line_id=None))
     return repartos
@@ -1733,7 +1792,7 @@ async def confirmar(
 
     descuadre = None
     if not cuadra(factura, lineas):
-        descuadre = (suma_de(lineas) - factura.total_amount).quantize(CENTIMO)
+        descuadre = cuantizar(suma_de(lineas) - factura.total_amount)
         if not datos.allow_total_mismatch:
             raise ReglaDeNegocio(
                 f"Las líneas suman {formato.euros(suma_de(lineas))} y el total es "

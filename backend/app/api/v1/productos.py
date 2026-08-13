@@ -61,6 +61,7 @@ from app.schemas.producto import (
     ProductoSugerenciaRespuesta,
 )
 from app.services import precios
+from app.services.formato import CENTIMO, CUATRO_DECIMALES, cuantizar
 from app.services.normalizacion import (
     UMBRAL_COINCIDENCIA,
     DescripcionNormalizada,
@@ -90,9 +91,6 @@ DIAS_PARA_DESHACER = 30
 
 #: Una observación con más de estos días ya no sirve para decidir dónde comprar.
 DIAS_PRECIO_RANCIO = 90
-
-CENTIMO = Decimal("0.01")
-CUATRO_DECIMALES = Decimal("0.0001")
 
 
 def ahora() -> datetime:
@@ -659,7 +657,7 @@ async def registrar_observacion(
         payee_id=payee_id,
         invoice_line_id=invoice_line_id,
         priced_on=fecha,
-        unit_price=precio_unitario.quantize(CUATRO_DECIMALES),
+        unit_price=cuantizar(precio_unitario, CUATRO_DECIMALES),
         unit=_u8(unidad),
         quantity=cantidad,
         line_total=total,
@@ -720,7 +718,7 @@ def _mediana(valores: list[Decimal]) -> Decimal | None:
     mitad = len(ordenados) // 2
     if len(ordenados) % 2:
         return ordenados[mitad]
-    return ((ordenados[mitad - 1] + ordenados[mitad]) / 2).quantize(CUATRO_DECIMALES)
+    return cuantizar((ordenados[mitad - 1] + ordenados[mitad]) / 2, CUATRO_DECIMALES)
 
 
 def comparativa_por_comercio(
@@ -740,8 +738,8 @@ def comparativa_por_comercio(
     filas: list[PrecioComercioRespuesta] = []
     for comparativa in comparativas:
         valores = medias[comparativa.comercio]
-        media = (sum(valores) / len(valores)).quantize(CUATRO_DECIMALES)
-        diferencia = (comparativa.precio - mas_barato).quantize(CENTIMO)
+        media = cuantizar(sum(valores) / len(valores), CUATRO_DECIMALES)
+        diferencia = cuantizar(comparativa.precio - mas_barato)
         filas.append(
             PrecioComercioRespuesta(
                 payee=ref_comercio(comercios.get(comparativa.comercio)),
@@ -837,7 +835,7 @@ async def comparar_cesta_de(
                 covered_items=cubiertos,
                 missing_items=len(ausentes),
                 coverage_pct=round(100 * cubiertos / len(lineas), 2) if lineas else 0.0,
-                diff_vs_cheapest=(total - minimo).quantize(CENTIMO),
+                diff_vs_cheapest=cuantizar(total - minimo),
                 stale_prices=rancios.get(comercio, 0),
                 is_comparable=not ausentes,
             )
@@ -905,7 +903,7 @@ async def _estadisticas_basicas(
             observations=fila[1],
             min=fila[2],
             max=fila[3],
-            avg=Decimal(fila[4]).quantize(CUATRO_DECIMALES) if fila[4] is not None else None,
+            avg=cuantizar(Decimal(fila[4]), CUATRO_DECIMALES) if fila[4] is not None else None,
             payees=fila[5],
         )
 

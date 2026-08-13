@@ -64,6 +64,7 @@ from app.schemas.recurrente import (
     RecurrenteSaltarCrear,
 )
 from app.schemas.transaccion import TipoMovimiento, TransaccionRespuesta
+from app.services.formato import cuantizar
 from app.services.recurrencia import (
     Frecuencia as FrecuenciaServicio,
 )
@@ -223,7 +224,7 @@ class Historial:
 
 def _coste_anual(fila: RecurringRule) -> Decimal:
     veces = _AL_ANYO[FrecuenciaServicio(fila.frequency)] / Decimal(fila.interval_count)
-    return (abs(fila.expected_amount) * veces).quantize(Decimal("0.01"))
+    return cuantizar(abs(fila.expected_amount) * veces)
 
 
 def respuesta_recurrente(
@@ -235,11 +236,7 @@ def respuesta_recurrente(
     ocurrencias_visibles: list[RecurringOccurrence] | None = None,
 ) -> RecurrenteRespuesta:
     importes = historial.importes
-    media = (
-        (sum((abs(i) for i in importes), CERO) / len(importes)).quantize(Decimal("0.01"))
-        if importes
-        else None
-    )
+    media = cuantizar(sum((abs(i) for i in importes), CERO) / len(importes)) if importes else None
     return RecurrenteRespuesta(
         id=fila.id,
         created_at=fila.created_at,
@@ -667,7 +664,7 @@ def _a_respuesta_detectado(deteccion: Deteccion) -> RecurrenteDetectadoRespuesta
         first_seen_on=deteccion.transacciones[0].booked_on,
         last_seen_on=deteccion.transacciones[-1].booked_on,
         estimated_frequency=deteccion.frecuencia,
-        average_amount=(sum(importes, CERO) / len(importes)).quantize(Decimal("0.01")),
+        average_amount=cuantizar(sum(importes, CERO) / len(importes)),
         last_amount=ultimo,
         amount_stability=round(deteccion.estabilidad, 3),
         price_increase_pct=(
@@ -990,9 +987,9 @@ async def publicar_ocurrencia(
     ocurrencia.transaction_id = transaccion.id
     ocurrencia.status = "created"
     if fila.expected_amount:
-        ocurrencia.amount_change_pct = (
+        ocurrencia.amount_change_pct = cuantizar(
             (importe - abs(fila.expected_amount)) / abs(fila.expected_amount) * 100
-        ).quantize(Decimal("0.01"))
+        )
     await alcance.sesion.flush()
     transaccion.recurring_occurrence_id = ocurrencia.id
 

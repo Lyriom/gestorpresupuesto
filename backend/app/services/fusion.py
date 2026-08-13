@@ -34,6 +34,7 @@ from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import Row, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import AlcanceHogar
@@ -1044,6 +1045,54 @@ SQL_CONFLICTO_POSTERIOR = text(
     """
 )
 
+#: Las lápidas que el deshacer va a resucitar y el nombre que ya está ocupado por
+#: una temática viva del mismo nivel. El índice único de `categories` excluye las
+#: lápidas, así que en cuanto una fusión libera un nombre la API deja crear otra
+#: temática con él; devolver `merged_into_id` a NULL entonces revienta el índice.
+#: `desarchivar` (`categorias.py`) hace esta misma comprobación con
+#: `_exigir_nombre_libre` antes de resucitar.
+SQL_NOMBRE_YA_OCUPADO = text(
+    """
+    SELECT lapida.name AS lapida, viva.name AS ocupante
+      FROM merge_operation_changes diario
+      JOIN categories lapida
+        ON lapida.id = diario.row_pk AND lapida.household_id = :hogar
+      JOIN categories viva
+        ON viva.household_id = lapida.household_id
+       AND viva.id <> lapida.id
+       AND viva.parent_id IS NOT DISTINCT FROM lapida.parent_id
+       AND lower(viva.name) = lower(lapida.name)
+       AND viva.archived_at IS NULL
+       AND viva.merged_into_id IS NULL
+     WHERE diario.merge_operation_id = ANY (cast(string_to_array(:ops, ',') as uuid[]))
+       AND diario.table_name = 'categories'
+       AND diario.change_type = 'update'
+       AND diario.column_name = 'merged_into_id'
+     LIMIT 1
+    """
+)
+
+#: Qué restricción de la base se ha quejado al aplicar el diario, en español. La
+#: reversión pisa el estado actual sin condición, así que si el usuario ha borrado
+#: o editado después lo que la fusión tocó el estado anterior ya no es restaurable:
+#: eso es un conflicto (409), no un error interno.
+MOTIVOS_DE_CONFLICTO: tuple[tuple[str, str], ...] = (
+    (
+        "fk_transaction_splits_household_id_transaction_id",
+        "uno de los movimientos que la fusión tocó ya no existe",
+    ),
+    (
+        "transaction_splits",
+        "el reparto de uno de los movimientos ha cambiado desde la fusión",
+    ),
+    (
+        "uq_categories_household_id_parent_id_name",
+        "ya hay otra temática con el nombre de la que habría que resucitar",
+    ),
+    ("ck_transactions_split_invariant", "el reparto restaurado no cuadra con su movimiento"),
+    ("budget_allocations", "la asignación de presupuesto ha cambiado desde la fusión"),
+)
+
 SQL_GRUPOS_DEL_DIARIO = text(
     """
     SELECT table_name, change_type, column_name, max(seq) AS orden
@@ -1203,7 +1252,15 @@ async def deshacer(alcance: AlcanceHogar, operacion_id: uuid.UUID) -> ResultadoF
             f"{peor.filas} de estos registros. Deshaz esa primero.",
         )
 
-    filas = await _revertir_diario(sesion, parametros)
+    ocupado = (await sesion.execute(SQL_NOMBRE_YA_OCUPADO, parametros)).first()
+    if ocupado is not None:
+        raise Conflicto(
+            f"No se puede deshacer: ya hay otra temática llamada «{ocupado.ocupante}» en el "
+            f"mismo nivel, así que «{ocupado.lapida}» no puede volver. Renómbrala o bórrala "
+            "y vuelve a intentarlo.",
+        )
+
+    filas = await _aplicar_diario(sesion, parametros)
 
     await sesion.execute(
         text("SELECT refresh_category_paths(cast(:hogar as uuid))"), {"hogar": hogar}
@@ -1252,6 +1309,35 @@ async def deshacer(alcance: AlcanceHogar, operacion_id: uuid.UUID) -> ResultadoF
         ),
         filas_cambiadas=filas,
     )
+
+
+async def _aplicar_diario(sesion: AsyncSession, parametros: dict[str, Any]) -> int:
+    """`_revertir_diario` dentro de un punto de guardado, traduciendo el conflicto.
+
+    La reversión pisa el estado actual sin condición: si el usuario ha borrado o
+    editado después lo que la fusión tocó, la base se queja y hasta ahora eso
+    salía como un 500 `error_interno` del que ya no se volvía. Un punto de
+    guardado deja la transacción utilizable para poder contarlo, porque en
+    PostgreSQL cualquier error aborta la transacción entera.
+
+    Las comprobaciones previas (`SQL_CONFLICTO_POSTERIOR`, `SQL_NOMBRE_YA_OCUPADO`)
+    cubren los casos que se saben anticipar y dan un mensaje concreto; esto es la
+    red para todo lo demás.
+    """
+    try:
+        async with sesion.begin_nested():
+            return await _revertir_diario(sesion, parametros)
+    except IntegrityError as error:
+        detalle = str(getattr(error, "orig", error))
+        motivo = next(
+            (texto for aguja, texto in MOTIVOS_DE_CONFLICTO if aguja in detalle),
+            "los datos que tocó ya no están como los dejó",
+        )
+        logger.warning("El deshacer de la fusión choca con la base: %s", detalle)
+        raise Conflicto(
+            f"No se puede deshacer: {motivo}. Esta fusión ya no es reversible sin "
+            "revisar antes lo que se ha cambiado desde entonces.",
+        ) from error
 
 
 async def _revertir_diario(sesion: AsyncSession, parametros: dict[str, Any]) -> int:

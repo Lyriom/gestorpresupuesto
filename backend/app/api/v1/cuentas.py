@@ -45,6 +45,7 @@ from app.schemas.cuenta import (
     TipoCuenta,
     TotalPorTipoRespuesta,
 )
+from app.services.formato import cuantizar
 
 router = APIRouter(tags=["accounts"])
 
@@ -127,7 +128,7 @@ def _color_de_ranura(ranura: int | None) -> str | None:
 def _dinero(valor: Any) -> Decimal:
     if valor is None:
         return CERO
-    return Decimal(str(valor)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return cuantizar(Decimal(str(valor)))
 
 
 # --------------------------------------------------------------------------- #

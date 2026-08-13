@@ -5,16 +5,33 @@ endpoints) hecha desde fuera del equipo que lo escribió. Punto de partida: 663
 pruebas en verde, `ruff` limpio y PostgreSQL con las migraciones aplicadas. El
 objetivo era justamente lo que las pruebas verdes no dicen.
 
-Al terminar: **683 pruebas en verde** (663 existentes + 20 nuevas en
-`backend/tests/test_auditoria.py`), `ruff format` y `ruff check` limpios.
+Al terminar la primera vuelta: **683 pruebas en verde** (663 existentes + 20
+nuevas en `backend/tests/test_auditoria.py`).
+
+Al terminar la **segunda vuelta** (cierre de pendientes): **698 pruebas en verde**
+(683 + 15 nuevas en `backend/tests/test_auditoria_2.py`), `ruff format` y
+`ruff check` limpios.
 
 ## Resumen ejecutivo
 
-**38 hallazgos** (2 críticos, 7 altos, 18 medios, 11 bajos) y 18 sospechas sin
-reproducir. **15 arreglados** —los 2 críticos, 5 de los altos, 6 medios y 2
-bajos—, cada uno con su prueba en `backend/tests/test_auditoria.py`; se verificó
-una por una que **falla con el código anterior** (la única excepción está marcada
-como tal en su fila). Los 23 restantes quedan documentados sin tocar.
+**38 hallazgos** (2 críticos, 8 altos, 17 medios, 11 bajos) y 18 sospechas sin
+reproducir. **25 arreglados** —los 2 críticos, 7 de los altos, 14 medios y 2
+bajos—, cada uno con su prueba en `backend/tests/test_auditoria.py` o
+`backend/tests/test_auditoria_2.py`; se verificó una por una que **falla con el
+código anterior** (las dos excepciones están marcadas como tales en su fila).
+Quedan **13 sin tocar**, más la mitad silenciosa del deshacer de una fusión, cuya
+mitad destructiva sí se ha cerrado.
+
+La segunda vuelta cerró el redondeo del dinero (centralizado en
+`formato.cuantizar()`, 73 sitios), el `IndexError` de la confirmación de facturas,
+la huella de duplicados, el N+1 del listado de facturas (46 → 8 consultas), los
+dos 500 del deshacer de una fusión y cuatro medios más de informes y objetivos.
+
+Y dos correcciones al propio informe. Una fila no era un hallazgo: la CSP de
+`main.py` ya estaba puesta, con `object-src 'none'` incluido. Y al escribir la
+prueba del coste de las suscripciones apareció un **hallazgo nuevo de gravedad
+alta** que ninguna prueba cubría: `GET /reports/subscriptions` respondía 500 con
+cualquier suscripción dada de alta.
 
 Lo que hay que saber si solo se leen tres párrafos:
 
@@ -69,32 +86,46 @@ las calcula siempre el servidor, con comprobación antitraversal.
 | **Media** | `app/api/v1/cuentas.py:653` (`saldo`) | `pending_recurring` sumaba **todos** los vencimientos pendientes del hogar: faltaba el join con `recurring_rules`, que es donde vive la cuenta | `GET /accounts/{id}/balance` devolvía el mismo pendiente para todas las cuentas del hogar, así que la proyección de saldo de F-47 estaba mal en cuanto hubiera más de una cuenta | Arreglado |
 | **Media** | `app/services/fusion.py:393` (`previsualizar`) | `allocated_total` ya incluye las asignaciones del destino y se acumulaba **una vez por origen** | `POST /categories/merge/preview` con dos orígenes infla `allocations_merged` (880,00 € donde la fusión real deja 560,00 €). Es la cifra del diálogo de confirmación: el usuario decide sobre un número falso | Arreglado (una sola consulta sobre el conjunto) |
 | **Media** | `app/api/v1/productos.py:365`, `:1597`, `:2009`, `:2065` | `default_category_id` y `payee_id` entraban sin comprobar el hogar. La FK compuesta lo impedía, pero en el `COMMIT` | `POST /products`, `PATCH /products/{id}`, `POST /prices`, `PATCH /prices/{id}` con un id de otro hogar → **500 `error_interno`** en lugar del 404 que manda RN-02, y el aislamiento dependía en exclusiva de una restricción de la base | Arreglado (404) |
-| **Media** | `app/services/numeros.py:172`, `app/services/formato.py:31`, `app/api/v1/facturas.py:1315`, `app/services/extraccion_pdf.py:73` | Dinero cuantizado con el redondeo **bancario** (el defecto de Python), no HALF_UP | `parsear_importe("12,345")` daba 12,34 € (entra por facturas y por CSV bancario); `euros(2,665)` se leía «2,66 €» en los avisos; 10 kWh a 0,2165 €/kWh se guardaban como 2,16 € en vez de 2,17 €. PostgreSQL redondea al alza al guardar en `numeric(14,2)`, así que el mismo importe salía distinto según quién lo cuantizara | Arreglado en los cuatro sitios; **quedan ~30** (ver pendientes) |
+| **Media** | `app/services/numeros.py:172`, `app/services/formato.py:31`, `app/api/v1/facturas.py:1315`, `app/services/extraccion_pdf.py:73` | Dinero cuantizado con el redondeo **bancario** (el defecto de Python), no HALF_UP | `parsear_importe("12,345")` daba 12,34 € (entra por facturas y por CSV bancario); `euros(2,665)` se leía «2,66 €» en los avisos; 10 kWh a 0,2165 €/kWh se guardaban como 2,16 € en vez de 2,17 €. PostgreSQL redondea al alza al guardar en `numeric(14,2)`, así que el mismo importe salía distinto según quién lo cuantizara | Arreglado (y en la segunda vuelta, los ~30 restantes) |
 | **Media** | `app/api/v1/transacciones.py:1604` (`_nombre_saneado`) | El saneado de los adjuntos era propio y mucho más laxo que `facturas.sanear_nombre()`: sin NFKC, sin lista blanca, recortando a 200 en vez de 120 y sin nombres reservados de Windows (RN-77) | El nombre acaba dentro de `Content-Disposition`; `%`, `;` y `"` pasaban tal cual. Un cliente que no sea un navegador puede mandar una comilla sin codificar y el cliente que descarga acaba interpretando parámetros que no escribió el servidor | Arreglado (mismas reglas que las facturas) |
 | **Baja** | `app/api/v1/transacciones.py:1722` (`descargar_adjunto`) | Faltaban `X-Content-Type-Options: nosniff` y `Content-Security-Policy: sandbox`, que §8.3.8 exige en la descarga | Un PDF servido `inline` (el valor por defecto) se abre en el origen de la aplicación sin sandbox | Arreglado (las dos cabeceras) |
 | **Baja** | `app/api/v1/auth.py:143` y `:489` | Los 429 salían sin `Retry-After`, que §2.4 pide. El comentario del código decía que `AppError` no transporta cabeceras, y sí lo hace desde `errors.py:37` | El cliente no sabe cuánto esperar y reintenta a ciegas | Arreglado (limitador y bloqueo por credencial) |
 
+### Arreglados en la segunda vuelta
+
+Las pruebas de estas filas están en `backend/tests/test_auditoria_2.py`, y todas
+se comprobaron primero contra el código anterior.
+
+| Gravedad | Fichero:línea | Qué falla | Cómo se explota o se manifiesta | Estado |
+|---|---|---|---|---|
+| **Alta** | `app/api/v1/informes.py:110-120` y `:1197` (`suscripciones`) | **Hallazgo nuevo.** `MESES_DE_FRECUENCIA` está indexado por el vocabulario **público** (`weekly`, `monthly`…) y `recurring_rules.frequency` guarda el del motor, en español (`ck_recurring_rules_frequency` no admite otra cosa). Ninguna clave coincidía nunca, y `Frecuencia(regla.frequency)` lanzaba `ValueError` | `GET /reports/subscriptions` respondía **500 `error_interno`** en cuanto el hogar tuviera una sola suscripción; el informe entero era inalcanzable. Además el factor caía siempre al valor por defecto, así que toda suscripción se contaba como mensual. Ninguna prueba lo cubría | Arreglado (claves del motor y `frecuencia_publica()`) |
+| **Alta** | `app/services/fusion.py:1254` (`_aplicar_diario`) | La reversión pisa el estado actual sin condición y cualquier queja de la base salía como error no controlado. En PostgreSQL el error aborta la transacción entera, así que no había forma de contarlo | Fusionar dos temáticas con reparto, borrar el movimiento y deshacer → violación de `fk_transaction_splits_household_id_transaction_id` → **500 `error_interno`** y la fusión ya no se podía deshacer nunca | Arreglado (punto de guardado + 409 con el motivo en español) |
+| **Media** | `app/services/fusion.py:1246` (`SQL_NOMBRE_YA_OCUPADO`) | El deshacer no comprobaba el árbol antes de resucitar la lápida, al contrario que `desarchivar` (`categorias.py:869`), que sí llama a `_exigir_nombre_libre` | Fusionar «Compra semanal»→«Supermercado», crear una temática nueva con el nombre libre (el índice único excluye lápidas) y deshacer → violación del índice → **500** en vez de 409 | Arreglado (409 nombrando la temática que estorba) |
+| **Media** | ~30 sitios en nueve ficheros (`services/precios.py`, `api/v1/informes.py`, `productos.py`, `recurrentes.py`, `comercios.py`, `facturas.py`, `alertas.py`, `cuentas.py`, `importaciones.py`, `services/extraccion_pdf.py`, `importacion.py`) | `quantize()` sin `rounding=`, o sea redondeo bancario, sobre dinero | El empate baja donde la base sube: media de precios 0,12345 → 0,1234 en vez de 0,1235; cesta de 1,5 l a 0,67 €/l → 1,00 € en vez de 1,01 € | Arreglado: un único cuantizador, `formato.cuantizar()`, en **73 sitios**. Una prueba recorre el `ast` de todo `app/` y exige que no quede ningún `quantize()` de dinero sin modo; los que quedan son porcentajes, proporciones, puntuaciones z y cantidades, listados uno a uno en `NO_SON_DINERO` |
+| **Media** | `app/api/v1/facturas.py:1682` (`_repartir`) | `defecto or repartos[0].category_id` con la lista vacía | Confirmar una factura con **todas** las líneas excluidas y sin `default_category_id` → `IndexError` → 500 | Arreglado (422 `datos_invalidos` explicado) |
+| **Media** | `app/services/importacion.py:254` (`calcular_huella`) | La huella interpola el `Decimal` como texto y `corregir_fila` (`importaciones.py:822`) la calculaba sin cuantizar | Corregir el importe de una fila mandando `"12.3"` en vez de `"12.30"` producía otra huella y **el duplicado dejaba de detectarse** al reimportar el extracto | Arreglado: se cuantiza dentro de `calcular_huella`, así que los tres caminos coinciden por construcción |
+| **Media** | `app/api/v1/facturas.py:895` (`listar`) | N+1: `respuesta_factura()` hacía `_lineas_de` + `get(Payee)` por factura, y con `include=lines` dos consultas más | Medido con un contador enganchado a `before_cursor_execute`: **46 consultas** para veinte facturas de tres líneas (~150 con `size=50`) | Arreglado: `selectinload(Invoice.lines)` y comercios, productos y temáticas de toda la página en una consulta cada uno. **46 → 8 consultas**, y con `include=lines` también 8 |
+| **Media** | `app/api/v1/informes.py:1183`, `:1199`, `:1210` | El coste anual de una suscripción se derivaba del **mensual ya redondeado** | Suscripción semanal de 10,00 €: mensual 43,33 € → `annual_cost` 519,96 € en lugar de 520,00 € | Arreglado (el anual sale del importe exacto) |
+| **Media** | `app/api/v1/informes.py:1278` | Prorrateo del presupuesto restante entre cuentas sin imputar el resto | 100,00 € entre 3 cuentas repartía 99,99 € | Arreglado (el resto va a la primera cuenta, como `_repartir()` y `reparto_sugerido()`) |
+| **Media** | `app/api/v1/objetivos.py:82` | `required_monthly` se redondeaba con HALF_UP | 100,00 € en 3 meses → 33,33 €; aportando eso tres veces se ingresan 99,99 € y el objetivo **no se alcanza**, pero `is_on_track` decía que sí | Arreglado (`ROUND_CEILING`: 33,34 €) |
+| **Media** | `app/main.py:72-83` | **La fila anterior estaba mal**: la CSP que pide §8.2 sí está, con `object-src 'none'` y `frame-ancestors 'none'`, y la aplica el middleware de `:96`; hay además una política aparte para `/api/docs` | Nada: no era un hallazgo | Sin cambios; queda una prueba de guardia. **Esta prueba pasaba ya antes** |
+
 ### Pendientes
 
 Ninguno se ha tocado: o no he conseguido demostrarlo con una prueba, o el arreglo
-es una decisión de diseño o de despliegue que no me corresponde tomar.
+es una decisión de diseño o de despliegue que no me corresponde tomar. La segunda
+vuelta cerró once de las filas que había aquí; las que quedan son las de la lista
+siguiente.
 
 | Gravedad | Fichero:línea | Qué falla | Cómo se manifiesta | Estado |
 |---|---|---|---|---|
 | **Alta** | `alembic/versions/20260813_0934_row_level_security.py:9-20` | La tercera capa de tenencia está **inerte**: políticas creadas, `FORCE ROW LEVEL SECURITY` no, y la aplicación conecta como propietaria | Cualquier consulta a la que le falte el filtro `household_id` y que no esté cubierta por una FK compuesta es explotable directamente. Además `deps.py:150` fija `app.household_id` con `set_config(..., true)`, que es **transaccional**: hay endpoints que `commit()` y siguen leyendo (`categorias.py:456`, `objetivos.py:391`, `presupuestos.py:671`), así que encender `FORCE` sin tocar eso deja esas lecturas en cero filas | Pendiente (necesita el rol `app_rw` y una revisión de las lecturas post-`commit`) |
-| **Alta** | `app/services/fusion.py:1137-1250` (reversión) | El deshacer pisa sin condición lo que el usuario cambió **después** de la fusión: la columna `new_value` se guarda (`:390`) y no se usa jamás, y `SQL_CONFLICTO_POSTERIOR` solo detecta otras fusiones | Fusionar A→D, subir la asignación de D de 500 a 700 con `PATCH /budgets/.../allocations`, deshacer → D vuelve a 320 y reaparece la de A: los 200 € añadidos desaparecen y el total asignado del mes cambia. Con splits editados a mano o con la transacción borrada, el `undo` responde 500 | Pendiente (comparar con `new_value` y responder 409 es un cambio de contrato de RN-20) |
-| **Media** | `app/services/fusion.py:1160-1250` | El deshacer no comprueba el árbol antes de resucitar la lápida, al contrario que `desarchivar` (`categorias.py:869`), que sí llama a `_exigir_nombre_libre` | Fusionar «Compra semanal»→«Supermercado», crear una temática nueva con el nombre libre (el índice único excluye lápidas, así que se permite) y deshacer → violación del índice → **500 `error_interno`** en vez de 409, y la fusión se queda sin poder deshacerse | Pendiente |
+| **Alta** | `app/services/fusion.py:1137-1250` (reversión) | El deshacer sigue pisando sin condición lo que el usuario cambió **después** de la fusión cuando ese cambio no rompe ninguna restricción de la base: la columna `new_value` se guarda (`:390`) y no se usa jamás, y `SQL_CONFLICTO_POSTERIOR` solo detecta otras fusiones | Fusionar A→D, subir la asignación de D de 500 a 700 con `PATCH /budgets/.../allocations`, deshacer → D vuelve a 320 y reaparece la de A: los 200 € añadidos desaparecen y el total asignado del mes cambia, **sin ningún error**. La mitad destructiva del hallazgo (los 500) sí está cerrada, ver «Arreglados en la segunda vuelta» | Pendiente en la parte silenciosa (comparar con `new_value` y responder 409 es un cambio de contrato de RN-20, y hay columnas que un disparador reescribe después de la fusión: sin distinguirlas, la comprobación daría 409 espurios) |
 | **Media** | `app/services/fusion.py:646-666` (`SQL_REPARENTAR_HIJAS`) | La fusión recuelga las hijas sin validar RN-11 (profundidad ≤ 6), mientras `mover` (`categorias.py:755`) y `crear` sí lo hacen | Con el destino más profundo que el origen, la misma geometría da 422 `profundidad_maxima` por `move` y 200 por `merge`; si el salto pasa de 8 niveles, `refresh_category_paths` incumple `ck_categories_depth` y sale un 500 después de haberlo hecho todo | Pendiente |
 | **Media** | `app/services/fusion.py:700-709` | RN-20 dice que `?force=true` **reabre** el periodo cerrado, recalcula y lo vuelve a cerrar; el código solo avisa y escribe dentro del periodo cerrado sin tocar `closed_at` ni recalcular el arrastre en cascada | Si el `rollover_mode` de origen y destino difiere, el `carryover_in` del mes siguiente ya escrito no se recalcula y el disponible queda desalineado hasta que alguien reabre y recierra a mano | Pendiente |
+| **Media** | `app/api/v1/presupuestos.py:851` y `app/api/v1/usuarios.py:158-170` | Los otros dos N+1 del barrido: un `get(Category)` por asignación y un acceso por pertenencia. El del listado de facturas, que era el grande, está arreglado | Son mucho más pequeños que el de las facturas (decenas de asignaciones frente a cincuenta facturas × sus líneas) y no he medido su coste real con datos de verdad, así que no los toco sin un número | Pendiente |
+| **Media** | `app/api/v1/facturas.py:1100-1150` (`_sugerencias_de`) | La cola de revisión de una factura de 40 líneas sigue haciendo un `get(Product)` por línea | Una sola factura por petición, así que el coste está acotado y no crece con el tamaño de la página; `Session.get()` además reutiliza el mapa de identidad cuando el producto se repite. El del listado, que era el que multiplicaba, sí está arreglado | Pendiente |
 | **Media** | `app/services/fusion.py:119-130` y `app/schemas/categoria.py:137` | `keep_source_names_as_alias` se acepta, se guarda en `options` y **nunca se usa**: RN-19 («los nombres antiguos quedan como alias buscables») no está implementado. `collapse_duplicate_splits` no existe en el esquema de entrada, así que el reparto siempre se colapsa | Buscar por el nombre viejo de una temática fusionada no encuentra nada; la casilla de §4.4 no tiene efecto | Pendiente |
-| **Media** | `app/api/v1/informes.py:1183`, `:1199`, `:1210` | El coste anual de una suscripción se deriva del **mensual ya redondeado** | Una suscripción semanal de 10,00 €: mensual 43,33 € → `annual_cost` 519,96 € en lugar de 520,00 €, y `annual_total` multiplica por 12 la suma de mensuales redondeados, así que el error crece con el número de suscripciones | Pendiente |
-| **Media** | `app/api/v1/informes.py:1278` | Prorrateo del presupuesto restante entre cuentas sin imputar el resto: `(restante / len(cuentas)).quantize(CENTIMO)` | 100,00 € entre 3 cuentas reparte 99,99 €. Es el único prorrateo del proyecto que no cuadra; `_repartir()` (`facturas.py:1654`) y `reparto_sugerido()` sí lo hacen | Pendiente |
-| **Media** | `app/api/v1/importaciones.py:822` (`corregir_fila`) | La huella de duplicados se calcula con el `Decimal` sin cuantizar, y `calcular_huella` lo interpola como texto | Corregir el importe de una fila enviando `"12.3"` en lugar de `"12.30"` produce una huella distinta y **el duplicado deja de detectarse** al reimportar el extracto. Los otros dos caminos de análisis (`importacion.py:386`, `importaciones.py:439`) sí cuantizan | Pendiente |
-| **Media** | `app/api/v1/facturas.py:1682` (`_repartir`) | `defecto or repartos[0].category_id` con la lista vacía | Confirmar una factura con **todas** las líneas excluidas y sin `default_category_id` → `IndexError` → 500 en lugar de un 422 explicado | Pendiente |
-| **Media** | ~30 sitios (`services/precios.py:85,122,197,274,296,327`; `api/v1/informes.py` (≈35); `productos.py:660,721,741`; `recurrentes.py:226,239,670,995`; `comercios.py:104,547`; `facturas.py:271,631,1169,1322,1679,1735`; `importacion.py:386`; `importaciones.py:439`) | `quantize()` sin `rounding=`, o sea redondeo bancario, sobre dinero | Mismo fallo que el ya arreglado: el empate baja donde la base sube. Lo correcto es un único cuantizador de dinero compartido, y esa es una decisión de diseño transversal que no toco a mitad de auditoría | Pendiente |
-| **Media** | `app/api/v1/objetivos.py:82` | `required_monthly` se redondea con HALF_UP | 100,00 € en 3 meses → 33,33 €; aportando eso tres meses se ingresan 99,99 € y el objetivo **no se alcanza**, pero `is_on_track` dice que sí. Un «cuánto necesito aportar» se redondea hacia arriba (`ROUND_CEILING`) | Pendiente |
-| **Media** | `app/api/v1/facturas.py:895` (`listar`) | N+1 en el listado: `respuesta_factura()` por factura hace `_lineas_de` + `get(Payee)`, y con `include=lines` dos consultas más | `GET /invoices?size=50` son ~150 consultas por página, ~200 con líneas. Con 40 líneas, el detalle (`:1063-1090`) suma otro `get(Product)` + `get(Category)` por línea. Lo mismo, más pequeño, en `presupuestos.py:851` (un `get(Category)` por asignación) y `usuarios.py:158-170` | Pendiente |
-| **Media** | `app/main.py:66-79` | Falta la CSP que pide §8.2 (`default-src 'self'; …; object-src 'none'; frame-ancestors 'none'`). Están las otras cinco cabeceras | Sin `object-src 'none'` un PDF se puede incrustar con un plugin, que es justo lo que la sección quiere evitar | Pendiente |
 | **Baja** | `app/api/v1/auth.py:487` | Un correo bloqueado responde 429 y uno inexistente 401, así que el código de estado revela si la cuenta existe (el **mensaje** sí es genérico, como pide §2.4) | Cinco intentos fallidos con un correo candidato: 429 en el sexto = existe; 401 = no existe. Antes del arreglo del limitador hacía falta esquivarlo con `X-Forwarded-For`; ahora hace falta esperar la ventana | Pendiente (comportamiento avalado por §2.4; se anota porque la enumeración sigue siendo posible) |
 | **Baja** | `app/api/deps.py:63` (`usuario_actual`) | El token de acceso solo se valida por firma: no se comprueba `password_changed_at` ni la revocación | Tras `logout-all`, `change-password` o revocar una sesión, un token de acceso robado sigue sirviendo hasta 30 minutos. §2.3 promete «revocación inmediata en servidor» | Pendiente (compromiso conocido del diseño; se cerraría comparando `iat` con `password_changed_at`) |
 | **Baja** | `app/api/v1/auth.py:530` (`refrescar`) | §2.4 pide 30 refrescos/hora **por familia de sesión** y solo hay límite por IP. Y dos refrescos simultáneos con el mismo token pueden pasar los dos el `revoked_at is None` | La detección de reutilización (RN-04) se puede esquivar con una carrera; no he conseguido provocarla de forma fiable en pruebas | Pendiente |
@@ -168,6 +199,31 @@ No he conseguido reproducirlas y por eso no he tocado el código.
     fichero. Efecto: un 409 espurio si el mismo usuario reutiliza un nombre en otro
     de sus hogares.
 
+## El cuantizador del dinero
+
+El redondeo del dinero vive ahora en un solo sitio, `app/services/formato.py`:
+
+```python
+CENTIMO = Decimal("0.01")            # la escala de numeric(14,2)
+CUATRO_DECIMALES = Decimal("0.0001") # la de los precios unitarios
+
+def cuantizar(valor: Decimal, escala: Decimal = CENTIMO) -> Decimal: ...
+```
+
+`formato.py` es el módulo más bajo del proyecto (no importa nada de `app`), así
+que lo pueden usar los 13 ficheros que manejan dinero sin ningún ciclo.
+`presupuesto._dinero()` y `cuentas._dinero()` siguen existiendo —normalizan
+entradas que pueden ser `None`, texto o `float`— pero delegan el redondeo aquí.
+
+Lo que **no** pasa por `cuantizar()` es deliberado y está en la lista
+`NO_SON_DINERO` de `test_auditoria_2.py`: porcentajes (`_pct`, `progress_pct`,
+`price_change_pct`), proporciones (`savings_rate`, `variacion`), puntuaciones z de
+las anomalías, cantidades en milésimas de unidad y `required_monthly`, que se
+redondea al alza con `ROUND_CEILING` porque es un «cuánto tengo que aportar» y no
+un importe observado. La prueba `test_el_dinero_no_se_cuantiza_nunca_con_el_
+redondeo_del_contexto` recorre el árbol sintáctico de todo `app/` y falla si
+aparece un `quantize()` de dinero nuevo sin pasar por el ayudante.
+
 ## Nota de despliegue
 
 El arreglo del limitador añade un ajuste nuevo, `TRUSTED_PROXIES`, y su valor por
@@ -195,3 +251,12 @@ automático de accesos a la base dentro de bucles, no de medir con `EXPLAIN`); l
 índices de los informes no los he contrastado uno a uno con las consultas; y la
 extracción de PDF la he mirado solo en lo que toca al dinero, al límite de tamaño
 y al saneado del nombre.
+
+En la segunda vuelta el N+1 del listado de facturas ya sí está **medido**, con un
+contador enganchado al evento `before_cursor_execute` de SQLAlchemy
+(`test_auditoria_2.py`, fixture `contador_de_consultas`): esa misma fixture sirve
+para poner número a los dos N+1 que quedan pendientes.
+
+La fila de **row level security** no se ha tocado: dejar el RLS activo con `FORCE`
+exige crear un rol de base de datos aparte y cambiar cómo se conecta la
+aplicación. Es un cambio de infraestructura y se hará por separado.

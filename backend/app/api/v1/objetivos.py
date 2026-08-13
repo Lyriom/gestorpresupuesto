@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, date, datetime
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response, status
@@ -79,7 +79,11 @@ def _respuesta(
     necesario = None
     if restante > CERO and meses is not None:
         # Con el mes objetivo ya encima, lo que falta hay que ponerlo este mes.
-        necesario = (restante / Decimal(max(meses, 1))).quantize(CENTIMO, rounding=ROUND_HALF_UP)
+        # `ROUND_CEILING` y no el redondeo del dinero: esto no es un importe
+        # observado sino un «cuánto tengo que aportar», y hacia abajo no llega.
+        # 100,00 € en tres meses son 33,34 €/mes; con 33,33 € se ingresan 99,99 €
+        # y el objetivo no se alcanza, pero `is_on_track` decía que sí.
+        necesario = (restante / Decimal(max(meses, 1))).quantize(CENTIMO, rounding=ROUND_CEILING)
     completado = acumulado >= fondo.target_amount
     return ObjetivoRespuesta(
         id=fondo.id,

@@ -55,11 +55,10 @@ from app.schemas.alerta import (
     TipoAlerta,
 )
 from app.schemas.comun import Pagina, ResultadoLoteRespuesta
-from app.services.formato import euros, porcentaje
+from app.services.formato import CENTIMO, cuantizar, euros, porcentaje
 
 router = APIRouter(dependencies=[Depends(verificar_csrf)])
 
-CENTIMO = Decimal("0.01")
 CERO = Decimal("0.00")
 
 #: Tipo del modelo → tipo del contrato.
@@ -302,7 +301,7 @@ async def digest(alcance: Alcance, filtro: Annotated[DigestFiltro, Query()]) -> 
         DigestPrecioRespuesta(
             product=ref_producto(producto),
             change_pct=float(observacion.change_pct or 0),
-            new_unit_price=observacion.unit_price.quantize(CENTIMO),
+            new_unit_price=cuantizar(observacion.unit_price),
         )
         for observacion, producto in (
             await alcance.sesion.execute(
@@ -379,7 +378,7 @@ async def _ingresos(alcance: AlcanceHogar, rango: Rango) -> Decimal:
     total = (
         await alcance.sesion.execute(select(func.coalesce(func.sum(base.c.amount), 0)))
     ).scalar_one()
-    return Decimal(total).quantize(CENTIMO)
+    return cuantizar(Decimal(total))
 
 
 @router.get("/alerts/{alert_id}", tags=["alerts"], summary="Detalle del aviso")

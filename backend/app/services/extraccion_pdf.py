@@ -19,12 +19,13 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import date
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 from io import BytesIO
 from typing import Literal
 
 import pdfplumber
 
+from app.services.formato import CUATRO_DECIMALES, cuantizar
 from app.services.normalizacion import DescripcionNormalizada, normalizar_descripcion
 from app.services.numeros import (
     normalizar_unidad,
@@ -38,7 +39,6 @@ logger = logging.getLogger(__name__)
 
 MetodoExtraccion = Literal["tabla", "texto", "ocr", "ninguno"]
 
-CENTIMO = Decimal("0.01")
 TOLERANCIA = Decimal("0.02")
 
 
@@ -70,11 +70,11 @@ class LineaExtraida:
 
         if c is not None and p is not None and t is None:
             # HALF_UP: en un empate (2,1650 €) el importe sube, como en la factura.
-            self.total = (c * p).quantize(CENTIMO, rounding=ROUND_HALF_UP)
+            self.total = cuantizar(c * p)
             self.confianza = min(self.confianza, 0.8)
         elif c is not None and t is not None and p is None:
             if c != 0:
-                self.precio_unitario = (t / c).quantize(Decimal("0.0001"))
+                self.precio_unitario = cuantizar(t / c, CUATRO_DECIMALES)
                 self.confianza = min(self.confianza, 0.85)
         elif p is not None and t is not None and c is None:
             if p != 0:
@@ -90,7 +90,7 @@ class LineaExtraida:
 
         c, p, t = self.cantidad, self.precio_unitario, self.total
         if c is not None and p is not None and t is not None:
-            esperado = (c * p).quantize(CENTIMO)
+            esperado = cuantizar(c * p)
             desviacion = abs(esperado - t)
             if desviacion <= TOLERANCIA:
                 self.confianza = min(1.0, self.confianza + 0.2)
@@ -265,12 +265,12 @@ def _buscar_importe_etiquetado(lineas: list[str], etiquetas: tuple[str, ...]) ->
                     n for n in candidatos if not re.search(rf"{re.escape(str(n))}\s*%", resto)
                 ]
             if candidatos:
-                return candidatos[-1].quantize(CENTIMO)
+                return cuantizar(candidatos[-1])
             # Si no hay, en la línea siguiente (tablas de totales a dos filas).
             if indice + 1 < len(lineas):
                 siguientes = numeros_de(lineas[indice + 1])
                 if siguientes:
-                    return siguientes[-1].quantize(CENTIMO)
+                    return cuantizar(siguientes[-1])
     return None
 
 
@@ -337,7 +337,7 @@ def _leer_cabecera(factura: FacturaExtraida, texto: str) -> None:
     factura.impuestos = _buscar_importe_etiquetado(lineas, _ETIQUETAS_IMPUESTO)
 
     if factura.total is None and factura.base_imponible and factura.impuestos:
-        factura.total = (factura.base_imponible + factura.impuestos).quantize(CENTIMO)
+        factura.total = cuantizar(factura.base_imponible + factura.impuestos)
 
     hay_dolares = "$" in texto or "USD" in texto.upper()
     hay_euros = "€" in texto or "EUR" in texto.upper()
@@ -431,7 +431,7 @@ def _linea_desde_fila(fila: list[str | None], mapa: dict[str, int]) -> LineaExtr
         descripcion=descripcion,
         cantidad=cantidad,
         unidad=unidad,
-        precio_unitario=precio_crudo.quantize(Decimal("0.0001")) if precio_crudo else None,
+        precio_unitario=cuantizar(precio_crudo, CUATRO_DECIMALES) if precio_crudo else None,
         total=parsear_importe(celda("total")),
         confianza=0.75,  # las tablas son la fuente más fiable
     )
@@ -532,8 +532,8 @@ def _extraer_de_texto(texto: str) -> list[LineaExtraida]:
         linea = LineaExtraida(
             descripcion=descripcion,
             cantidad=cantidad,
-            precio_unitario=precio.quantize(Decimal("0.0001")) if precio is not None else None,
-            total=total.quantize(CENTIMO),
+            precio_unitario=cuantizar(precio, CUATRO_DECIMALES) if precio is not None else None,
+            total=cuantizar(total),
             confianza=0.5,  # menos fiable que una tabla con cabecera
         )
         lineas.append(linea)

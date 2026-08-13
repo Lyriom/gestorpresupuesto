@@ -16,7 +16,6 @@ import logging
 import re
 import uuid as uuidlib
 from datetime import date
-from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -61,6 +60,7 @@ from app.schemas.importacion import (
     ImportacionResultadoRespuesta,
     MapeoImportacionCrear,
 )
+from app.services.formato import cuantizar
 from app.services.importacion import (
     ErrorImportacion,
     EstadoFila,
@@ -76,7 +76,6 @@ logger = logging.getLogger("app.importaciones")
 
 router = APIRouter(dependencies=[Depends(verificar_csrf)])
 
-CENTIMO = Decimal("0.01")
 TROZO = 64 * 1024
 SEGUNDOS_DE_ESPERA = 2
 
@@ -436,7 +435,7 @@ async def _analizar_estructurado(
             mensaje = "; ".join(problemas).capitalize() + "."
         else:
             assert importe is not None  # noqa: S101 - lo garantiza la lista de problemas
-            importe = importe.quantize(CENTIMO)
+            importe = cuantizar(importe)
             huella = calcular_huella(fecha, importe, concepto)
             estado = "duplicate" if huella in vistas else "new"
             mensaje = "Este movimiento ya está registrado." if estado == "duplicate" else None

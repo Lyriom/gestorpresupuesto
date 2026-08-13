@@ -13,9 +13,8 @@ from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 
-from app.services.formato import euros
+from app.services.formato import CENTIMO, cuantizar, euros
 
-CENTIMO = Decimal("0.01")
 CERO = Decimal("0.00")
 
 PATRON_PERIODO = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])$")
@@ -63,12 +62,16 @@ def periodo_siguiente(periodo: str) -> str:
 
 
 def _dinero(valor: Decimal | int | float | str | None) -> Decimal:
-    """Normaliza cualquier entrada a un importe con dos decimales."""
+    """Normaliza cualquier entrada a un importe con dos decimales.
+
+    El redondeo lo decide `formato.cuantizar()`, que es el único sitio del
+    proyecto donde vive el modo del dinero.
+    """
     if valor is None:
         return CERO
     if not isinstance(valor, Decimal):
         valor = Decimal(str(valor))
-    return valor.quantize(CENTIMO, rounding=ROUND_HALF_UP)
+    return cuantizar(valor)
 
 
 @dataclass(slots=True)
@@ -165,6 +168,8 @@ def _estado_de(efectivo: Decimal, gastado: Decimal, disponible: Decimal) -> Esta
 def _porcentaje(parte: Decimal, total: Decimal) -> Decimal:
     if total <= CERO:
         return CERO
+    # No es dinero, así que no pasa por `cuantizar()`; el modo se fija aquí porque
+    # el porcentaje se enseña al usuario y el empate tiene que subir.
     return (parte / total * 100).quantize(CENTIMO, rounding=ROUND_HALF_UP)
 
 

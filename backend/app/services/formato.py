@@ -12,6 +12,29 @@ from decimal import ROUND_HALF_UP, Decimal
 
 CERO = Decimal("0")
 
+CENTIMO = Decimal("0.01")
+"""Escala del dinero: los dos decimales de `numeric(14,2)`."""
+
+CUATRO_DECIMALES = Decimal("0.0001")
+"""Escala de los precios unitarios: el kWh a `0,1489 €` los pierde con dos."""
+
+
+def cuantizar(valor: Decimal, escala: Decimal = CENTIMO) -> Decimal:
+    """Cuantiza un importe con el redondeo del dinero: `ROUND_HALF_UP`.
+
+    Es el único sitio del proyecto donde se decide el modo de redondeo de un
+    importe. `Decimal.quantize()` sin `rounding=` usa el del contexto, que en
+    Python es `ROUND_HALF_EVEN` (redondeo bancario): con él `12,345 €` se
+    convierte en `12,34 €` y `12,355 €` en `12,36 €`, o sea que el empate cae
+    a un lado o a otro según la cifra anterior. PostgreSQL redondea siempre al
+    alza al guardar en `numeric(14,2)`, así que el mismo importe salía distinto
+    según quién lo cuantizase.
+
+    No vale para porcentajes, proporciones ni tipos de interés: esos no son
+    dinero y su escala la fija su propia columna.
+    """
+    return valor.quantize(escala, rounding=ROUND_HALF_UP)
+
 
 def _con_separadores(entero: str) -> str:
     grupos: list[str] = []

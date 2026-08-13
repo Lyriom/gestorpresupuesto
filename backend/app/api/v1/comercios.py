@@ -43,6 +43,7 @@ from app.schemas.comercio import (
     ComercioTematicaRespuesta,
 )
 from app.schemas.comun import Pagina
+from app.services.formato import cuantizar
 from app.services.normalizacion import similitud, sin_acentos
 
 # Las rutas llevan su prefijo completo (`/payees`), así que el agregador
@@ -101,7 +102,7 @@ def _respuesta(
     movimientos = datos.get("movimientos")
     medio = None
     if gastado is not None and movimientos:
-        medio = (Decimal(str(gastado)) / Decimal(str(movimientos))).quantize(Decimal("0.01"))
+        medio = cuantizar(Decimal(str(gastado)) / Decimal(str(movimientos)))
     return ComercioRespuesta(
         id=comercio.id,
         created_at=comercio.created_at,
@@ -544,7 +545,7 @@ async def estadisticas_comercio(
         period_to=periodo_valido(period_to) if period_to else None,
         total_spent=total,
         transactions=movimientos,
-        average_ticket=(total / movimientos).quantize(Decimal("0.01")) if movimientos else CERO,
+        average_ticket=cuantizar(total / movimientos) if movimientos else CERO,
         by_period=meses,
         by_category=categorias,
     )

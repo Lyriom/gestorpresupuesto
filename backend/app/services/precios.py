@@ -14,9 +14,7 @@ from decimal import Decimal
 from enum import StrEnum
 
 from app.services import formato
-
-CUATRO_DECIMALES = Decimal("0.0001")
-CENTIMO = Decimal("0.01")
+from app.services.formato import CENTIMO, CUATRO_DECIMALES, cuantizar
 
 # Por debajo de este cambio se considera ruido de redondeo, no una subida.
 UMBRAL_RUIDO = Decimal("0.005")  # 0,5 %
@@ -119,7 +117,7 @@ def analizar_historial(
     analisis.fecha_actual = ordenados[-1].fecha
     analisis.precio_minimo = min(precios)
     analisis.precio_maximo = max(precios)
-    analisis.precio_medio = (sum(precios) / len(precios)).quantize(CUATRO_DECIMALES)
+    analisis.precio_medio = cuantizar(sum(precios) / len(precios), CUATRO_DECIMALES)
     analisis.fecha_minimo = next(p.fecha for p in ordenados if p.precio == analisis.precio_minimo)
     analisis.fecha_maximo = next(p.fecha for p in ordenados if p.precio == analisis.precio_maximo)
 
@@ -148,8 +146,8 @@ def analizar_historial(
         mas_barato = min(analisis.por_comercio, key=lambda c: c.precio)
         analisis.comercio_mas_barato = mas_barato.comercio
         if analisis.precio_actual is not None and mas_barato.precio < analisis.precio_actual:
-            analisis.ahorro_por_unidad = (analisis.precio_actual - mas_barato.precio).quantize(
-                CUATRO_DECIMALES
+            analisis.ahorro_por_unidad = cuantizar(
+                analisis.precio_actual - mas_barato.precio, CUATRO_DECIMALES
             )
 
     return analisis
@@ -271,7 +269,7 @@ class ComparativaCesta:
         candidatos = completos or self.totales
         if len(candidatos) < 2:
             return Decimal("0.00")
-        return (max(candidatos.values()) - min(candidatos.values())).quantize(CENTIMO)
+        return cuantizar(max(candidatos.values()) - min(candidatos.values()))
 
 
 def comparar_cesta(lineas: list[LineaCesta]) -> ComparativaCesta:
@@ -293,7 +291,7 @@ def comparar_cesta(lineas: list[LineaCesta]) -> ComparativaCesta:
                 incompletos[comercio].append(linea.nombre)
                 continue
             total += precio * linea.cantidad
-        totales[comercio] = total.quantize(CENTIMO)
+        totales[comercio] = cuantizar(total)
 
     return ComparativaCesta(totales=totales, lineas=lineas, incompletos=dict(incompletos))
 

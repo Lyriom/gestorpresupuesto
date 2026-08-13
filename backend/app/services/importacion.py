@@ -18,6 +18,7 @@ from datetime import date
 from decimal import Decimal
 from enum import StrEnum
 
+from app.services.formato import cuantizar
 from app.services.normalizacion import sin_acentos
 from app.services.numeros import parsear_decimal, parsear_fecha
 
@@ -255,9 +256,15 @@ def calcular_huella(fecha: date | None, importe: Decimal | None, concepto: str) 
 
     Se normaliza el concepto porque el mismo apunte reexportado puede venir con
     espaciado distinto. No se usa el saldo: cambia si se reordenan los apuntes.
+
+    El importe se cuantiza **aquí** y no en cada llamante: se interpola como texto,
+    así que `-42,3` y `-42,30` daban huellas distintas y el duplicado dejaba de
+    detectarse al reimportar el mismo extracto. Dos de los tres caminos de análisis
+    lo cuantizaban antes de llamar; el tercero (`corregir_fila`) no.
     """
     texto = re.sub(r"\s+", " ", sin_acentos(concepto).lower()).strip()
-    base = f"{fecha.isoformat() if fecha else ''}|{importe if importe is not None else ''}|{texto}"
+    normalizado = "" if importe is None else cuantizar(importe)
+    base = f"{fecha.isoformat() if fecha else ''}|{normalizado}|{texto}"
     return hashlib.sha256(base.encode("utf-8")).hexdigest()[:32]
 
 
@@ -383,7 +390,7 @@ def importar_csv(
             resultado.filas.append(fila)
             continue
 
-        fila.importe = fila.importe.quantize(Decimal("0.01"))
+        fila.importe = cuantizar(fila.importe)
         fila.huella = calcular_huella(fila.fecha, fila.importe, fila.concepto)
         if fila.huella in huellas_vistas:
             fila.estado = EstadoFila.DUPLICADA

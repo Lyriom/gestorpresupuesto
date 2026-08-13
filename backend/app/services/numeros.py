@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import re
 from datetime import date
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation
+
+from app.services.formato import cuantizar
 
 # Unidades habituales en facturas de suministros y de supermercado.
 UNIDADES = {
@@ -169,7 +171,7 @@ def parsear_importe(texto: str | None) -> Decimal | None:
     el mismo importe se redondeaba distinto según quién lo cuantizase.
     """
     valor = parsear_decimal(texto)
-    return None if valor is None else valor.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return None if valor is None else cuantizar(valor)
 
 
 def numeros_de(texto: str) -> list[Decimal]:

@@ -42,6 +42,7 @@ from app.api.v1.productos import (
     ref_producto,
     ultima_observacion,
 )
+from app.api.v1.recurrentes import frecuencia_publica
 from app.core.errors import ReglaDeNegocio
 from app.models.categoria import Category
 from app.models.comercio import Payee
@@ -93,30 +94,33 @@ from app.schemas.informe import (
     TopComerciosFiltro,
     TopComerciosRespuesta,
 )
-from app.schemas.recurrente import Frecuencia
 from app.schemas.transaccion import TransaccionRespuesta
 from app.services import precios
-from app.services.formato import euros, porcentaje
+from app.services.formato import CENTIMO, CUATRO_DECIMALES, cuantizar, euros, porcentaje
+from app.services.recurrencia import Frecuencia as FrecuenciaMotor
 
 router = APIRouter(dependencies=[Depends(verificar_csrf)])
 
-CENTIMO = Decimal("0.01")
 CERO = Decimal("0.00")
 
 #: Cuántos meses se muestran cuando no se pide un rango concreto.
 MESES_POR_DEFECTO = 12
 
 #: Meses equivalentes de cada frecuencia, para el coste mensual de una suscripción.
+#: Las claves son las del **vocabulario del motor**, en español, que es lo que hay
+#: en `recurring_rules.frequency` (`ck_recurring_rules_frequency` no admite otra
+#: cosa). Antes estaban las del contrato público —`weekly`, `monthly`…—, así que
+#: ninguna coincidía nunca: el `.get()` se iba al valor por defecto y toda
+#: suscripción se contaba como mensual.
 MESES_DE_FRECUENCIA: dict[str, Decimal] = {
-    Frecuencia.WEEKLY: Decimal("52") / Decimal("12"),
-    Frecuencia.BIWEEKLY: Decimal("26") / Decimal("12"),
-    Frecuencia.MONTHLY: Decimal(1),
-    Frecuencia.BIMONTHLY: Decimal("0.5"),
-    Frecuencia.QUARTERLY: Decimal(1) / Decimal(3),
-    Frecuencia.SEMIANNUAL: Decimal(1) / Decimal(6),
-    Frecuencia.YEARLY: Decimal(1) / Decimal(12),
-    Frecuencia.EVERY_N_DAYS: Decimal(1),
-    Frecuencia.LAST_WEEKDAY_OF_MONTH: Decimal(1),
+    FrecuenciaMotor.DIARIA: Decimal("365") / Decimal("12"),
+    FrecuenciaMotor.SEMANAL: Decimal("52") / Decimal("12"),
+    FrecuenciaMotor.QUINCENAL: Decimal("26") / Decimal("12"),
+    FrecuenciaMotor.MENSUAL: Decimal(1),
+    FrecuenciaMotor.BIMESTRAL: Decimal("0.5"),
+    FrecuenciaMotor.TRIMESTRAL: Decimal(1) / Decimal(3),
+    FrecuenciaMotor.SEMESTRAL: Decimal(1) / Decimal(6),
+    FrecuenciaMotor.ANUAL: Decimal(1) / Decimal(12),
 }
 
 # La vista que ya resuelve «simple o repartida» y el signo del gasto.
@@ -344,7 +348,7 @@ async def _por_categoria(
     importes: dict[uuidlib.UUID | None, Decimal] = {}
     cuantos: dict[uuidlib.UUID | None, int] = {}
     for fila in (await alcance.sesion.execute(consulta)).all():
-        importes[fila[0]] = Decimal(fila[1]).quantize(CENTIMO)
+        importes[fila[0]] = cuantizar(Decimal(fila[1]))
         cuantos[fila[0]] = fila[2]
     return importes, cuantos
 
@@ -379,7 +383,7 @@ async def _asignado(alcance: AlcanceHogar, rango: Rango) -> dict[uuidlib.UUID, D
             .group_by(BudgetAllocation.category_id)
         )
     ).all()
-    return {fila[0]: Decimal(fila[1]).quantize(CENTIMO) for fila in filas}
+    return {fila[0]: cuantizar(Decimal(fila[1])) for fila in filas}
 
 
 # --------------------------------------------------------------------------- #
@@ -567,7 +571,7 @@ async def comparativa_mensual(
     por_tematica: dict[str, dict[str, Decimal]] = defaultdict(dict)
     for fila in (await alcance.sesion.execute(consulta)).all():
         periodo = periodo_de(fila[0])
-        importe = Decimal(fila[2]).quantize(CENTIMO)
+        importe = cuantizar(Decimal(fila[2]))
         gasto[periodo] += importe
         if fila[1] is not None:
             por_tematica[periodo][str(fila[1])] = importe
@@ -580,7 +584,7 @@ async def comparativa_mensual(
             )
         )
     ).all():
-        entradas[periodo_de(fila[0])] = Decimal(fila[1]).quantize(CENTIMO)
+        entradas[periodo_de(fila[0])] = cuantizar(Decimal(fila[1]))
 
     serie = [
         PuntoMensualRespuesta(
@@ -592,11 +596,7 @@ async def comparativa_mensual(
         )
         for periodo in periodos_entre(rango.periodo_desde, rango.periodo_hasta)
     ]
-    media = (
-        (sum((punto.expense for punto in serie), CERO) / len(serie)).quantize(CENTIMO)
-        if serie
-        else CERO
-    )
+    media = cuantizar(sum((punto.expense for punto in serie), CERO) / len(serie)) if serie else CERO
     con_gasto = [punto for punto in serie if punto.expense > 0]
     cuerpo = ComparativaMensualRespuesta(
         periods=[punto.period for punto in serie],
@@ -651,8 +651,8 @@ async def cash_flow(
     entradas_totales = CERO
     salidas_totales = CERO
     for fila in (await alcance.sesion.execute(consulta)).all():
-        entrada = Decimal(fila.entradas or 0).quantize(CENTIMO)
-        salida = abs(Decimal(fila.salidas or 0)).quantize(CENTIMO)
+        entrada = cuantizar(Decimal(fila.entradas or 0))
+        salida = cuantizar(abs(Decimal(fila.salidas or 0)))
         neto = entrada - salida
         acumulado += neto
         entradas_totales += entrada
@@ -722,7 +722,7 @@ async def top_comercios(
                 payee=ref_comercio(comercios.get(payee_id)) if payee_id else None,
                 amount=datos["amount"],
                 transactions=datos["transactions"],
-                average_ticket=(datos["amount"] / datos["transactions"]).quantize(CENTIMO)
+                average_ticket=cuantizar(datos["amount"] / datos["transactions"])
                 if datos["transactions"]
                 else CERO,
                 share_pct=_pct(datos["amount"], total),
@@ -768,7 +768,7 @@ async def _por_comercio(
         entrada = resumen.setdefault(
             fila[0], {"amount": CERO, "transactions": 0, "top_category": None, "mayor": CERO}
         )
-        importe = Decimal(fila[2]).quantize(CENTIMO)
+        importe = cuantizar(Decimal(fila[2]))
         entrada["amount"] += importe
         entrada["transactions"] += fila[3]
         if importe > entrada["mayor"]:
@@ -808,7 +808,7 @@ async def patrimonio(
     ).all()
     por_cuenta: dict[Any, dict[str, Decimal]] = defaultdict(dict)
     for fila in movimientos:
-        por_cuenta[fila[0]][periodo_de(fila[1].date())] = Decimal(fila[2]).quantize(CENTIMO)
+        por_cuenta[fila[0]][periodo_de(fila[1].date())] = cuantizar(Decimal(fila[2]))
 
     puntos: list[PuntoPatrimonioRespuesta] = []
     anterior_neto: Decimal | None = None
@@ -825,12 +825,12 @@ async def patrimonio(
                 pasivos += -saldo
             else:
                 activos += saldo
-        neto = (activos - pasivos).quantize(CENTIMO)
+        neto = cuantizar(activos - pasivos)
         puntos.append(
             PuntoPatrimonioRespuesta(
                 period=periodo,
-                assets=activos.quantize(CENTIMO),
-                liabilities=pasivos.quantize(CENTIMO),
+                assets=cuantizar(activos),
+                liabilities=cuantizar(pasivos),
                 net_worth=neto,
                 change=(neto - anterior_neto) if anterior_neto is not None else CERO,
                 change_pct=_variacion(anterior_neto, neto),
@@ -860,7 +860,7 @@ async def patrimonio(
                         currency=cuenta.currency,
                     ),
                     type=TipoCuenta(cuenta.type),
-                    balance=valor.quantize(CENTIMO),
+                    balance=cuantizar(valor),
                     is_liability=TipoCuenta(cuenta.type) in TIPOS_PASIVO,
                 )
             )
@@ -910,7 +910,7 @@ async def presupuesto_vs_real(
     ).all()
     base = _gasto(alcance.household_id, rango).subquery()
     gastado = {
-        (periodo_de(fila[0]), fila[1]): Decimal(fila[2]).quantize(CENTIMO)
+        (periodo_de(fila[0]), fila[1]): cuantizar(Decimal(fila[2]))
         for fila in (
             await alcance.sesion.execute(
                 select(base.c.period_month, base.c.category_id, func.sum(base.c.spent)).group_by(
@@ -925,7 +925,7 @@ async def presupuesto_vs_real(
         if category_id not in arbol:
             continue
         periodo = periodo_de(periodo_mes)
-        asignado = Decimal(importe).quantize(CENTIMO)
+        asignado = cuantizar(Decimal(importe))
         real = gastado.get((periodo, category_id), CERO)
         sobrepasa = real > asignado
         if filtro.only_overspent and not sobrepasa:
@@ -993,7 +993,7 @@ async def precio_de_producto(
     for punto in puntos:
         ventana.append(punto.precio)
         ventana = ventana[-3:]
-        media = (sum(ventana) / len(ventana)).quantize(Decimal("0.0001"))
+        media = cuantizar(sum(ventana) / len(ventana), CUATRO_DECIMALES)
         serie.append(
             PuntoPrecioProductoRespuesta(
                 observed_at=punto.fecha,
@@ -1070,10 +1070,10 @@ async def subidas_de_precio(
         anterior = (
             previa.unit_price
             if previa is not None
-            else (observacion.unit_price / (1 + cambio / 100)).quantize(Decimal("0.0001"))
+            else cuantizar(observacion.unit_price / (1 + cambio / 100), CUATRO_DECIMALES)
         )
         cantidad = observacion.quantity or Decimal(1)
-        impacto = ((observacion.unit_price - anterior) * cantidad).quantize(CENTIMO)
+        impacto = cuantizar((observacion.unit_price - anterior) * cantidad)
         impacto_total += impacto
         filas.append(
             SubidaPrecioFilaRespuesta(
@@ -1178,10 +1178,16 @@ async def suscripciones(
 
     filas: list[SuscripcionFilaRespuesta] = []
     mensual_total = CERO
+    # El anual se calcula **antes** de redondear el mensual: derivarlo del mensual
+    # ya cuantizado convertía una suscripción semanal de 10,00 € en 519,96 € al año
+    # en lugar de 520,00 €, y el error crecía con el número de suscripciones.
+    anual_total = CERO
     for regla in reglas:
         factor = MESES_DE_FRECUENCIA.get(regla.frequency, Decimal(1))
-        mensual = (abs(regla.expected_amount) * factor).quantize(CENTIMO)
+        exacto = abs(regla.expected_amount) * factor
+        mensual = cuantizar(exacto)
         mensual_total += mensual
+        anual_total += exacto * 12
         cambio = None
         if regla.last_amount and regla.expected_amount:
             cambio = _variacion(abs(regla.expected_amount), abs(regla.last_amount))
@@ -1193,10 +1199,13 @@ async def suscripciones(
                 category=(
                     _ref_categoria(arbol[regla.category_id]) if regla.category_id in arbol else None
                 ),
-                frequency=Frecuencia(regla.frequency),
-                amount=abs(regla.expected_amount).quantize(CENTIMO),
+                # `regla.frequency` es el vocabulario del motor: `Frecuencia(...)`
+                # a secas lanzaba `ValueError` y el informe respondía 500 con
+                # cualquier suscripción dada de alta.
+                frequency=frecuencia_publica(regla),
+                amount=cuantizar(abs(regla.expected_amount)),
                 monthly_cost=mensual,
-                annual_cost=(mensual * 12).quantize(CENTIMO),
+                annual_cost=cuantizar(exacto * 12),
                 next_occurrence_on=regla.next_due_on,
                 price_change_pct=cambio,
                 increased_last_year=regla.id in subidas,
@@ -1207,7 +1216,7 @@ async def suscripciones(
 
     cuerpo = SuscripcionesRespuesta(
         monthly_total=mensual_total,
-        annual_total=(mensual_total * 12).quantize(CENTIMO),
+        annual_total=cuantizar(anual_total),
         active=sum(1 for fila in filas if fila.is_active),
         increases_last_year=sum(1 for fila in filas if fila.increased_last_year),
         rows=filas,
@@ -1251,7 +1260,7 @@ async def saldo_proyectado(
         ).all()
     }
     pendientes = {
-        fila[0]: abs(Decimal(fila[1])).quantize(CENTIMO)
+        fila[0]: cuantizar(abs(Decimal(fila[1])))
         for fila in (
             await alcance.sesion.execute(
                 select(RecurringRule.account_id, func.sum(RecurringRule.expected_amount))
@@ -1275,13 +1284,18 @@ async def saldo_proyectado(
         ),
         CERO,
     )
-    reparto = (restante / len(cuentas)).quantize(CENTIMO) if cuentas else CERO
+    # El resto se imputa a la primera cuenta en lugar de perderse: 100,00 € entre
+    # tres cuentas repartía 99,99 €. Es el mismo criterio que `_repartir()` de las
+    # facturas y `reparto_sugerido()`, los otros dos prorrateos del proyecto.
+    reparto = cuantizar(restante / len(cuentas)) if cuentas else CERO
+    resto = cuantizar(restante - reparto * len(cuentas)) if cuentas else CERO
 
     filas: list[SaldoProyectadoFilaRespuesta] = []
-    for cuenta in cuentas:
-        actual = saldos.get(cuenta.id, cuenta.opening_balance).quantize(CENTIMO)
+    for posicion, cuenta in enumerate(cuentas):
+        parte = reparto + resto if posicion == 0 else reparto
+        actual = cuantizar(saldos.get(cuenta.id, cuenta.opening_balance))
         recurrente = pendientes.get(cuenta.id, CERO)
-        proyectado = (actual - recurrente - reparto).quantize(CENTIMO)
+        proyectado = cuantizar(actual - recurrente - parte)
         filas.append(
             SaldoProyectadoFilaRespuesta(
                 account=CuentaRefRespuesta(
@@ -1292,7 +1306,7 @@ async def saldo_proyectado(
                 ),
                 current_balance=actual,
                 pending_recurring=recurrente,
-                remaining_budget=reparto,
+                remaining_budget=parte,
                 projected_balance=proyectado,
                 will_be_negative=proyectado < 0,
             )
@@ -1416,12 +1430,11 @@ async def anomalias(
                     _ref_categoria(arbol[fila.category_id]) if fila.category_id in arbol else None
                 ),
                 payee=ref_comercio(comercios.get(fila.payee_id)) if fila.payee_id else None,
-                amount=gasto.quantize(CENTIMO),
-                average_amount=media.quantize(CENTIMO),
+                amount=cuantizar(gasto),
+                average_amount=cuantizar(media),
                 z_score=z,
                 reason=(
-                    f"{euros(gasto)} frente a una media de {euros(media.quantize(CENTIMO))} "
-                    f"en {nombre}."
+                    f"{euros(gasto)} frente a una media de {euros(cuantizar(media))} en {nombre}."
                 ),
             )
         )
@@ -1455,7 +1468,7 @@ async def ingresos_vs_gastos(
     ingreso = _gasto(alcance.household_id, rango, tipo="income").subquery()
 
     gastos = {
-        periodo_de(fila[0]): Decimal(fila[1]).quantize(CENTIMO)
+        periodo_de(fila[0]): cuantizar(Decimal(fila[1]))
         for fila in (
             await alcance.sesion.execute(
                 select(gasto.c.period_month, func.sum(gasto.c.spent)).group_by(gasto.c.period_month)
@@ -1463,7 +1476,7 @@ async def ingresos_vs_gastos(
         ).all()
     }
     ingresos = {
-        periodo_de(fila[0]): Decimal(fila[1]).quantize(CENTIMO)
+        periodo_de(fila[0]): cuantizar(Decimal(fila[1]))
         for fila in (
             await alcance.sesion.execute(
                 select(ingreso.c.period_month, func.sum(ingreso.c.amount)).group_by(
