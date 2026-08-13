@@ -1,0 +1,558 @@
+/* =============================================================================
+   Tokens del sistema de diseño — docs/ux/design-system.md §2, §3 y §4.
+   Dos capas: valores crudos por tema (--c-*, --elev-*) y mapeo a utilidades
+   Tailwind con @theme inline. Ningún componente escribe un hex.
+   ============================================================================= */
+
+/* ============================================================
+   TEMA OSCURO — tema principal y valor por defecto
+   ============================================================ */
+:root {
+  color-scheme: dark;
+
+  /* --- Superficies ------------------------------------------------ */
+  --c-app-bg: #0e1116;
+  --c-surface: #151a21;
+  --c-surface-2: #1c222b;
+  --c-surface-3: #232b36;
+  --c-surface-sunken: #0a0d12;
+  --c-border: #2a323d;
+  --c-border-strong: #3a4552;
+  --c-border-soft: #1e2530;
+  --c-overlay: rgb(4 6 9 / 0.72);
+
+  /* --- Texto ------------------------------------------------------ */
+  --c-text-1: #f2f5f9;
+  --c-text-2: #a7b2c0;
+  --c-text-3: #7e8a99;
+  --c-text-disabled: #5a6472;
+  --c-text-on-fill: #0a0e14;
+
+  /* --- Acento de marca -------------------------------------------- */
+  --c-accent: #4e7fff;
+  --c-accent-hover: #6b92ff;
+  --c-accent-press: #3d6ce8;
+  --c-accent-text: #7099ff;
+  --c-accent-wash: color-mix(in oklab, #4e7fff 14%, transparent);
+  --c-accent-ring: color-mix(in oklab, #4e7fff 55%, transparent);
+
+  /* --- Semánticos (estado, no identidad) -------------------------- */
+  --c-positive: #3fbf6f;
+  --c-negative: #f2555a;
+  --c-warning: #e3a008;
+  --c-info: #3fb6e8;
+  --c-positive-wash: color-mix(in oklab, #3fbf6f 16%, transparent);
+  --c-negative-wash: color-mix(in oklab, #f2555a 16%, transparent);
+  --c-warning-wash: color-mix(in oklab, #e3a008 16%, transparent);
+  --c-info-wash: color-mix(in oklab, #3fb6e8 16%, transparent);
+
+  /* --- Cromo de gráficos ------------------------------------------ */
+  --c-grid: #232a34;
+  --c-axis: #38414d;
+  --c-axis-text: #7e8a99;
+  --c-track: #1e2530;
+  --c-deemphasis: #4a5462;
+
+  /* --- Paleta categórica (12) · el ORDEN es el mecanismo de seguridad --- */
+  --c-cat-1: #568ef9;
+  --c-cat-2: #c2520b;
+  --c-cat-3: #02a6ad;
+  --c-cat-4: #ce3344;
+  --c-cat-5: #3fac4a;
+  --c-cat-6: #b343ad;
+  --c-cat-7: #ac9008;
+  --c-cat-8: #6f5ddf;
+  --c-cat-9: #20a888;
+  --c-cat-10: #9d6000;
+  --c-cat-11: #d36c9d;
+  --c-cat-12: #026fb9;
+  --c-cat-other: #4a5462;
+
+  /* --- Rampa secuencial (azul, 100→700) --------------------------- */
+  --c-seq-100: #132b5a;
+  --c-seq-200: #1c3e81;
+  --c-seq-300: #2552aa;
+  --c-seq-400: #3368d0;
+  --c-seq-500: #4680f1;
+  --c-seq-600: #679cff;
+  --c-seq-700: #91b7fe;
+
+  /* --- Rampa divergente (ámbar ↔ azul, gris neutro) --------------- */
+  --c-div-warm-3: #e8b14a;
+  --c-div-warm-2: #c08a2a;
+  --c-div-warm-1: #8a6014;
+  --c-div-neutral: #39414d;
+  --c-div-cool-1: #2c5a8e;
+  --c-div-cool-2: #4a82c8;
+  --c-div-cool-3: #8fb6f0;
+
+  /* --- Elevación: en oscuro se sube la superficie y se insinúa la luz --- */
+  --elev-0: none;
+  --elev-1: inset 0 1px 0 0 rgb(255 255 255 / 0.045);
+  --elev-2: inset 0 1px 0 0 rgb(255 255 255 / 0.07);
+  --elev-3:
+    inset 0 1px 0 0 rgb(255 255 255 / 0.09), 0 24px 48px -24px rgb(0 0 0 / 0.6);
+  --glow-accent: 0 0 0 1px var(--c-accent-ring), 0 0 24px -6px var(--c-accent-wash);
+  --glow-negative: 0 0 0 1px color-mix(in oklab, var(--c-negative) 55%, transparent);
+
+  /* --- Espaciado, escala de 4 px ---------------------------------- */
+  --sp-0: 0;
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+  --sp-16: 64px;
+  --sp-20: 80px;
+
+  /* --- Radios ------------------------------------------------------ */
+  --r-xs: 3px;
+  --r-sm: 5px;
+  --r-md: 7px;
+  --r-lg: 10px;
+  --r-xl: 14px;
+  --r-bar: 4px;
+  --r-full: 9999px;
+
+  /* --- Tipografía: tamaño / interlineado / peso -------------------- */
+  --t-hero: 2.5rem;
+  --t-hero-lh: 1.05;
+  --t-display: 1.75rem;
+  --t-display-lh: 1.15;
+  --t-h1: 1.5rem;
+  --t-h1-lh: 1.25;
+  --t-h2: 1.25rem;
+  --t-h2-lh: 1.3;
+  --t-h3: 1.0625rem;
+  --t-h3-lh: 1.35;
+  --t-body: 0.9375rem;
+  --t-body-lh: 1.5;
+  --t-sm: 0.875rem;
+  --t-sm-lh: 1.45;
+  --t-caption: 0.8125rem;
+  --t-caption-lh: 1.4;
+  --t-micro: 0.75rem;
+  --t-micro-lh: 1.35;
+
+  /* --- Movimiento -------------------------------------------------- */
+  --dur-instant: 80ms;
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 240ms;
+  --dur-bar: 320ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-emphasis: cubic-bezier(0.2, 0.9, 0.25, 1);
+
+  /* --- Geometría de chrome ----------------------------------------- */
+  --lateral-ancho: 240px;
+  --lateral-ancho-min: 64px;
+  --barra-inferior-alto: 56px;
+}
+
+/* ============================================================
+   TEMA CLARO — solo overrides
+   ============================================================ */
+[data-theme='light'] {
+  color-scheme: light;
+
+  --c-app-bg: #f2f5f8;
+  --c-surface: #ffffff;
+  --c-surface-2: #ffffff;
+  --c-surface-3: #f7f9fb;
+  --c-surface-sunken: #edf1f5;
+  --c-border: #d5dde7;
+  --c-border-strong: #b9c4d2;
+  --c-border-soft: #e6ebf1;
+  --c-overlay: rgb(15 20 25 / 0.42);
+
+  --c-text-1: #0f1419;
+  --c-text-2: #4c5867;
+  --c-text-3: #5e6b7e;
+  --c-text-disabled: #9aa5b4;
+  --c-text-on-fill: #ffffff;
+
+  --c-accent: #2c5fe0;
+  --c-accent-hover: #2451c7;
+  --c-accent-press: #1d45ac;
+  --c-accent-text: #2c5fe0;
+  --c-accent-wash: color-mix(in oklab, #2c5fe0 10%, transparent);
+  --c-accent-ring: color-mix(in oklab, #2c5fe0 55%, transparent);
+
+  --c-positive: #11803d;
+  --c-negative: #c4283a;
+  --c-warning: #8a5a00;
+  --c-info: #0b6c9e;
+  --c-positive-wash: color-mix(in oklab, #11803d 10%, transparent);
+  --c-negative-wash: color-mix(in oklab, #c4283a 10%, transparent);
+  --c-warning-wash: color-mix(in oklab, #8a5a00 10%, transparent);
+  --c-info-wash: color-mix(in oklab, #0b6c9e 10%, transparent);
+
+  --c-grid: #e8edf3;
+  --c-axis: #c9d3df;
+  --c-axis-text: #5e6b7e;
+  --c-track: #edf1f5;
+  --c-deemphasis: #aab6c4;
+
+  --c-cat-1: #1e59cd;
+  --c-cat-2: #da682c;
+  --c-cat-3: #06949a;
+  --c-cat-4: #e75f66;
+  --c-cat-5: #026a1a;
+  --c-cat-6: #cb5ac3;
+  --c-cat-7: #aa8f02;
+  --c-cat-8: #5737c8;
+  --c-cat-9: #08987a;
+  --c-cat-10: #cb862e;
+  --c-cat-11: #d05b95;
+  --c-cat-12: #015590;
+  --c-cat-other: #8593a4;
+
+  --c-seq-100: #cddfff;
+  --c-seq-200: #a8c5f9;
+  --c-seq-300: #81aaf7;
+  --c-seq-400: #5a8ff3;
+  --c-seq-500: #3672e9;
+  --c-seq-600: #1e59cd;
+  --c-seq-700: #1043a8;
+
+  --c-div-warm-3: #7a4e00;
+  --c-div-warm-2: #b07a18;
+  --c-div-warm-1: #e0b871;
+  --c-div-neutral: #dce3eb;
+  --c-div-cool-1: #9bbce8;
+  --c-div-cool-2: #3d74be;
+  --c-div-cool-3: #10437f;
+
+  /* En claro sí se usa sombra convencional. */
+  --elev-1: 0 1px 2px rgb(15 20 25 / 0.06);
+  --elev-2: 0 4px 12px -2px rgb(15 20 25 / 0.1);
+  --elev-3: 0 16px 32px -8px rgb(15 20 25 / 0.16);
+}
+
+/* ============================================================
+   MAPEO A UTILIDADES TAILWIND v4
+   ============================================================ */
+@theme {
+  --font-sans:
+    'InterVariable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --font-mono:
+    ui-monospace, 'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, monospace;
+
+  /* Breakpoints de §9.1. Coinciden con los de Tailwind; se declaran para que
+     el contrato quede escrito en un solo sitio junto a useMedia.ts. */
+  --breakpoint-sm: 40rem;
+  --breakpoint-md: 48rem;
+  --breakpoint-lg: 64rem;
+  --breakpoint-xl: 80rem;
+  --breakpoint-2xl: 96rem;
+}
+
+@theme inline {
+  --color-app: var(--c-app-bg);
+  --color-surface: var(--c-surface);
+  --color-surface-2: var(--c-surface-2);
+  --color-surface-3: var(--c-surface-3);
+  --color-sunken: var(--c-surface-sunken);
+  --color-line: var(--c-border);
+  --color-line-strong: var(--c-border-strong);
+  --color-line-soft: var(--c-border-soft);
+  --color-overlay: var(--c-overlay);
+
+  --color-ink: var(--c-text-1);
+  --color-ink-2: var(--c-text-2);
+  --color-ink-3: var(--c-text-3);
+  --color-ink-off: var(--c-text-disabled);
+  --color-on-fill: var(--c-text-on-fill);
+
+  --color-accent: var(--c-accent);
+  --color-accent-hover: var(--c-accent-hover);
+  --color-accent-press: var(--c-accent-press);
+  --color-accent-text: var(--c-accent-text);
+  --color-accent-wash: var(--c-accent-wash);
+  --color-accent-ring: var(--c-accent-ring);
+
+  --color-positive: var(--c-positive);
+  --color-negative: var(--c-negative);
+  --color-warning: var(--c-warning);
+  --color-info: var(--c-info);
+  --color-positive-wash: var(--c-positive-wash);
+  --color-negative-wash: var(--c-negative-wash);
+  --color-warning-wash: var(--c-warning-wash);
+  --color-info-wash: var(--c-info-wash);
+
+  --color-grid: var(--c-grid);
+  --color-axis: var(--c-axis);
+  --color-axis-text: var(--c-axis-text);
+  --color-track: var(--c-track);
+  --color-deemphasis: var(--c-deemphasis);
+
+  --color-cat-1: var(--c-cat-1);
+  --color-cat-2: var(--c-cat-2);
+  --color-cat-3: var(--c-cat-3);
+  --color-cat-4: var(--c-cat-4);
+  --color-cat-5: var(--c-cat-5);
+  --color-cat-6: var(--c-cat-6);
+  --color-cat-7: var(--c-cat-7);
+  --color-cat-8: var(--c-cat-8);
+  --color-cat-9: var(--c-cat-9);
+  --color-cat-10: var(--c-cat-10);
+  --color-cat-11: var(--c-cat-11);
+  --color-cat-12: var(--c-cat-12);
+  --color-cat-other: var(--c-cat-other);
+
+  --color-seq-100: var(--c-seq-100);
+  --color-seq-200: var(--c-seq-200);
+  --color-seq-300: var(--c-seq-300);
+  --color-seq-400: var(--c-seq-400);
+  --color-seq-500: var(--c-seq-500);
+  --color-seq-600: var(--c-seq-600);
+  --color-seq-700: var(--c-seq-700);
+
+  --color-div-warm-3: var(--c-div-warm-3);
+  --color-div-warm-2: var(--c-div-warm-2);
+  --color-div-warm-1: var(--c-div-warm-1);
+  --color-div-neutral: var(--c-div-neutral);
+  --color-div-cool-1: var(--c-div-cool-1);
+  --color-div-cool-2: var(--c-div-cool-2);
+  --color-div-cool-3: var(--c-div-cool-3);
+
+  /* Nombres propios para no pisar text-sm / text-xs de Tailwind. */
+  --text-hero: var(--t-hero);
+  --text-hero--line-height: var(--t-hero-lh);
+  --text-hero--font-weight: 600;
+  --text-hero--letter-spacing: -0.012em;
+  --text-display: var(--t-display);
+  --text-display--line-height: var(--t-display-lh);
+  --text-display--font-weight: 600;
+  --text-display--letter-spacing: -0.012em;
+  --text-h1: var(--t-h1);
+  --text-h1--line-height: var(--t-h1-lh);
+  --text-h1--font-weight: 600;
+  --text-h2: var(--t-h2);
+  --text-h2--line-height: var(--t-h2-lh);
+  --text-h2--font-weight: 600;
+  --text-h3: var(--t-h3);
+  --text-h3--line-height: var(--t-h3-lh);
+  --text-h3--font-weight: 600;
+  --text-cuerpo: var(--t-body);
+  --text-cuerpo--line-height: var(--t-body-lh);
+  --text-aux: var(--t-sm);
+  --text-aux--line-height: var(--t-sm-lh);
+  --text-meta: var(--t-caption);
+  --text-meta--line-height: var(--t-caption-lh);
+  --text-meta--font-weight: 500;
+  --text-micro: var(--t-micro);
+  --text-micro--line-height: var(--t-micro-lh);
+  --text-micro--font-weight: 600;
+  --text-micro--letter-spacing: 0.04em;
+
+  --radius-xs: var(--r-xs);
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+  --radius-xl: var(--r-xl);
+  --radius-bar: var(--r-bar);
+}
+
+/* ============================================================
+   BASE
+   ============================================================ */
+@layer base {
+  *,
+  *::before,
+  *::after {
+    border-color: var(--c-border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    background-color: var(--c-app-bg);
+    color: var(--c-text-1);
+    font-size: var(--t-body);
+    line-height: var(--t-body-lh);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    /* Sin pesos sintéticos: en oscuro un 300 falso se deshilacha. */
+    font-synthesis-weight: none;
+    text-rendering: optimizeLegibility;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: 2px;
+  }
+
+  /* El foco nunca queda debajo de una cabecera pegajosa. */
+  a,
+  button,
+  input,
+  select,
+  textarea,
+  summary,
+  [tabindex] {
+    scroll-margin-top: 80px;
+  }
+
+  ::selection {
+    background-color: var(--c-accent-wash);
+  }
+
+  ::placeholder {
+    color: var(--c-text-3);
+    opacity: 1;
+  }
+
+  /* Regla de números — no negociable (§3.3). */
+  .num,
+  [data-money],
+  th[data-numeric],
+  td[data-numeric] {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1, 'zero' 0;
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  /* A partir de 28 px las cifras de ancho fijo necesitan cerrar el aire. */
+  .num-grande {
+    letter-spacing: -0.012em;
+  }
+}
+
+/* ============================================================
+   PRIMITIVAS COMPARTIDAS
+   ============================================================ */
+@layer components {
+  .elev-1 {
+    box-shadow: var(--elev-1);
+  }
+  .elev-2 {
+    box-shadow: var(--elev-2);
+  }
+  .elev-3 {
+    box-shadow: var(--elev-3);
+  }
+
+  /* Tarjeta: paso de superficie + borde de 1 px. Nunca sombra en oscuro. */
+  .tarjeta {
+    background-color: var(--c-surface);
+    border: 1px solid var(--c-border);
+    border-radius: var(--r-lg);
+    box-shadow: var(--elev-1);
+  }
+
+  /* Objetivo táctil de 44 px sin agrandar el pintado (§5 convenciones). */
+  .toque-44 {
+    position: relative;
+  }
+  .toque-44::after {
+    content: '';
+    position: absolute;
+    inset: 50% auto auto 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    translate: -50% -50%;
+  }
+
+  /* Canal de reserva: rayas a 45°, tono sobre tono. Nunca decorativo. */
+  .rayas {
+    background-image: repeating-linear-gradient(
+      45deg,
+      color-mix(in oklab, var(--c-text-1) 22%, transparent) 0 2px,
+      transparent 2px 6px
+    );
+  }
+  .rayas-espejo {
+    background-image: repeating-linear-gradient(
+      135deg,
+      color-mix(in oklab, var(--c-text-1) 22%, transparent) 0 2px,
+      transparent 2px 6px
+    );
+  }
+
+  /* Skeleton: barrido de 1,4 s; con movimiento reducido, opacidad estática. */
+  .esqueleto {
+    background-color: var(--c-surface-3);
+    border-radius: var(--r-sm);
+    background-image: linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in oklab, var(--c-text-1) 7%, transparent) 50%,
+      transparent 100%
+    );
+    background-size: 200% 100%;
+    background-repeat: no-repeat;
+    animation: barrido-esqueleto 1.4s linear infinite;
+  }
+
+  /* Recarga: se mantiene el render anterior atenuado, nunca se vuelve al skeleton. */
+  .recargando {
+    opacity: 0.55;
+    pointer-events: none;
+  }
+}
+
+@keyframes barrido-esqueleto {
+  from {
+    background-position: -100% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+
+/* ============================================================
+   PREFERENCIAS DEL SISTEMA
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* Excepción intencionada: los fundidos puros se conservan a 100 ms. Sin
+     ellos los cambios de estado pasan desapercibidos. */
+  .fade-only {
+    transition-duration: 100ms !important;
+  }
+  .esqueleto {
+    background-image: none;
+    opacity: 0.6;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --c-border: var(--c-border-strong);
+    --c-border-soft: var(--c-border-strong);
+    --c-text-3: var(--c-text-2);
+  }
+}
+
+@media (forced-colors: active) {
+  :root {
+    --c-border: CanvasText;
+    --c-border-strong: CanvasText;
+  }
+  .tarjeta,
+  .elev-1,
+  .elev-2,
+  .elev-3 {
+    border: 1px solid CanvasText;
+  }
+}

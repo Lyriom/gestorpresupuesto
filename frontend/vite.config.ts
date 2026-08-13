@@ -30,8 +30,10 @@ export default defineConfig({
       output: {
         // Separa el vendor de gráficos: es la dependencia más pesada y no hace
         // falta en la primera pintura del dashboard.
-        manualChunks: {
-          charts: ['chart.js', 'vue-chartjs'],
+        // Vite 8 empaqueta con Rolldown, donde el `manualChunks` en forma de
+        // objeto ya no existe: su equivalente es un grupo de codeSplitting.
+        codeSplitting: {
+          groups: [{ name: 'charts', test: /[\\/]node_modules[\\/](chart\.js|vue-chartjs)[\\/]/ }],
         },
       },
     },
