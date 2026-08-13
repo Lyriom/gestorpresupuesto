@@ -10,14 +10,15 @@ revés) · ⬜ pendiente.
 
 | Prioridad | Total | ✅ | 🟡 | ⬜ |
 | --- | --- | --- | --- | --- |
-| P0 (imprescindible) | 25 | 24 | 1 | 0 |
-| P1 (alto valor) | 25 | 18 | 6 | 1 |
-| P2 (nice-to-have) | 10 | 2 | 1 | 7 |
-| **Total** | **60** | **44** | **8** | **8** |
+| P0 (imprescindible) | 25 | 25 | 0 | 0 |
+| P1 (alto valor) | 25 | 21 | 4 | 0 |
+| P2 (nice-to-have) | 10 | 2 | 2 | 6 |
+| **Total** | **60** | **48** | **6** | **6** |
 
-Del MVP (los 25 P0) está todo terminado salvo la pantalla de importación de
-CSV, cuyo backend sí está completo y probado. Las cifras se actualizan cuando
-el trabajo en curso queda verificado.
+**El MVP está entero**: las 25 funcionalidades P0 terminadas y probadas. De las
+P1 quedan cuatro a medias, todas con el cálculo hecho y la pantalla no: importar
+OFX/QIF, editar plantillas de extracción, exportar el ZIP con los PDF y enviar el
+resumen por correo.
 
 ## P0 — imprescindibles
 
@@ -47,7 +48,7 @@ el trabajo en curso queda verificado.
 | F-22 | Login propio | ✅ | `/auth/*`, cookies httpOnly con CSRF |
 | F-23 | Modo oscuro | ✅ | `styles/tema.css`, es el tema por defecto |
 | F-24 | PWA instalable | ✅ | `public/manifest.webmanifest`, `public/sw.js` con los datos nunca cacheados, iconos y atajos |
-| F-25 | Importación CSV de movimientos | 🟡 | `services/importacion.py` y `/imports/*` terminados y probados; la pantalla de revisión, en curso |
+| F-25 | Importación CSV de movimientos | ✅ | `services/importacion.py`, `/imports/*` y `ImportarMovimientosVista.vue` con asignación de columnas y revisión fila a fila |
 
 ## P1 — alto valor
 
@@ -67,7 +68,7 @@ el trabajo en curso queda verificado.
 | F-37 | Top comercios | ✅ | `GET /reports/top-payees` |
 | F-38 | Comparador entre proveedores | ✅ | `GET /products/{id}/comparison` |
 | F-39 | Fuzzy-matching de producto | ✅ | `services/normalizacion.py`, cascada con `pg_trgm` y RapidFuzz |
-| F-40 | Plantillas de extracción | 🟡 | En curso |
+| F-40 | Plantillas de extracción | 🟡 | `services/plantillas_extraccion.py` y `/invoices/templates/*`, con deducción desde una factura ya corregida y prueba en seco; falta la pantalla para editarlas (hoy se crean por la API) |
 | F-41 | Deuda con calendario | ✅ | `GET /accounts/{id}/amortization` |
 | F-42 | Búsqueda y filtros combinables | ✅ | `GET /transactions` con filtros, orden y paginación en la URL |
 | F-43 | Exportación de datos | 🟡 | `/exports/*` en JSON y CSV; el ZIP con los PDF originales no está |
@@ -75,7 +76,7 @@ el trabajo en curso queda verificado.
 | F-45 | Resumen periódico | 🟡 | `GET /alerts/digest` lo calcula; no hay envío por correo |
 | F-46 | Atajos de teclado | ✅ | `composables/useAtajos.ts` |
 | F-47 | Saldo proyectado a fin de mes | ✅ | `GET /reports/projected-balance` |
-| F-48 | Detección de gasto inusual | 🟡 | En curso; hoy `GET /reports/anomalies` devuelve lista vacía a propósito |
+| F-48 | Detección de gasto inusual | ✅ | `services/anomalias.py` (mediana y desviación absoluta mediana), `GET /reports/anomalies` y aviso en el panel |
 | F-49 | Recordatorio de vencimiento | ✅ | `GET /recurring/upcoming`, con alerta |
 | F-50 | Onboarding guiado | ✅ | `OnboardingVista.vue`, tres pasos |
 
@@ -110,6 +111,23 @@ Tres capas, todas activas y comprobadas:
 Comprobado sobre una base con 421.874 categorías de muchos hogares: como
 propietario se ven todas; con el rol puesto y sin hogar fijado se ven **0**; con
 un hogar fijado, solo las 102 de ese hogar.
+
+## Comprobado sobre la imagen de despliegue
+
+Todo lo anterior está verificado ejecutando la imagen Docker contra una base de
+datos vacía, no solo con la batería de pruebas (822, todas en verde):
+
+- Arranque en 3 s: migraciones aplicadas, 40 tablas, 34 con row level security.
+- Las seis facturas de `ejemplos/` subidas, extraídas y confirmadas **en el orden
+  en que se ven**, que es de la más nueva a la más vieja.
+- Histórico de precio correcto, con los cuatro decimales del kWh intactos:
+  0,1389 → 0,1489 → 0,1612 €/kWh, y el aceite de 8,95 € a 11,45 €.
+- Aviso de subida de precio con las ocho variaciones y su impacto en euros.
+- La barra del presupuesto con una devolución de por medio.
+- Gasto inusual: salta con 780 € sobre una costumbre de 46,95 €, y calla con seis
+  compras de entre 40 y 54 €.
+- Manifiesto servido como `application/manifest+json`, assets con caché de un año
+  e `index.html` y `sw.js` siempre revalidados.
 
 ## Pendientes técnicos
 

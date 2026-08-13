@@ -23,6 +23,13 @@ Despliega el servicio. EasyPanel lo expone dentro de la red del proyecto con el
 host `$(PROJECT_NAME)_db`, es decir `gestor-presupuesto_db`. **No** publiques el
 puerto 5432 hacia fuera: la app se conecta por la red interna.
 
+El usuario que crea EasyPanel es el dueño de la base de datos, y eso hace falta:
+la primera migración crea un rol interno (`app_rw`) sin permiso de conexión, que
+es con el que la aplicación lee y escribe para que el aislamiento entre hogares
+lo imponga PostgreSQL y no solo el código. Si algún día mueves la base a un
+servicio gestionado que no deje crear roles, esa migración fallará y el arranque
+lo dirá con ese motivo.
+
 ## 3. Servicio de aplicación
 
 `+ Service` → **App**.
@@ -163,6 +170,8 @@ Además, la propia aplicación permite exportar todos tus datos en JSON desde
 | Error 413 al subir una factura | Supera `MAX_UPLOAD_MB`; súbelo y redespliega |
 | Las facturas desaparecen tras desplegar | Falta el volumen montado en `/data` |
 | La web carga pero la API da 404 | El build no copió los estáticos: revisa que el build use el `Dockerfile` de la raíz |
+| Los logs dicen `permission denied to create role` | El usuario de `DATABASE_URL` no es el dueño de la base. Usa el que creó EasyPanel con el servicio de Postgres |
+| El navegador no ofrece «Instalar aplicación» | Solo aparece con HTTPS y dominio propio; en `http://` el navegador no instala nada |
 
 ## Consumo aproximado
 

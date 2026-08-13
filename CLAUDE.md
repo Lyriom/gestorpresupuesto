@@ -95,3 +95,14 @@ Antes de implementar algo nuevo, mira si ya está especificado:
   coma decimal con el separador de campos.
 - El umbral de aviso del presupuesto se mide sobre lo asignado **más lo
   arrastrado**, no solo sobre lo asignado.
+- Los importes se **teclean en positivo** y el `kind` dice la intención. Un gasto
+  con importe negativo es una **devolución**, y entonces el gasto del mes en esa
+  temática puede salir negativo: es correcto y hay que enseñarlo. Lo que no puede
+  salir negativo es el porcentaje que dibuja el segmento de la barra.
+- La variación de precio de un producto se calcula **contra las observaciones ya
+  guardadas**, así que al insertar una hay que rehacer las posteriores. Si no,
+  subir las facturas de la más nueva a la más vieja —el orden en que se listan—
+  deja todas las variaciones a nulo y el informe de subidas vacío.
+- El gasto inusual se compara por **movimiento y temática**, no por línea: una
+  factura del súper tiene una línea por producto y comparándolas sueltas el
+  producto más caro de una compra normal salta como anomalía.
