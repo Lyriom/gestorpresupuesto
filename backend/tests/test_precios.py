@@ -56,7 +56,7 @@ class TestAnalizarHistorial:
         assert analisis.variacion_ultima == Decimal("0.1739")
         assert analisis.hay_alerta
         assert analisis.mensaje_alerta is not None
-        assert "17.39 %" in analisis.mensaje_alerta
+        assert "17,39 %" in analisis.mensaje_alerta
 
     def test_una_bajada_no_genera_alerta(self):
         analisis = analizar_historial([punto(1, "2.00"), punto(20, "1.50")])

@@ -98,7 +98,9 @@ _MENSAJES_VALIDACION = {
     "greater_than_equal": "El valor es demasiado pequeño.",
     "less_than": "El valor debe ser menor.",
     "less_than_equal": "El valor es demasiado grande.",
-    "decimal_max_places": "Como máximo dos decimales.",
+    # Sin concretar el número: hay campos de dos decimales (importes) y de
+    # cuatro (precios unitarios de luz y gas).
+    "decimal_max_places": "Tiene demasiados decimales.",
     "int_parsing": "Debe ser un número entero.",
     "decimal_parsing": "Debe ser un número.",
     "float_parsing": "Debe ser un número.",

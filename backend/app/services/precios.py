@@ -13,6 +13,8 @@ from datetime import date
 from decimal import Decimal
 from enum import StrEnum
 
+from app.services import formato
+
 CUATRO_DECIMALES = Decimal("0.0001")
 CENTIMO = Decimal("0.01")
 
@@ -131,11 +133,14 @@ def analizar_historial(
         analisis.tendencia = Tendencia.SIN_DATOS
 
     if analisis.variacion_ultima is not None and analisis.variacion_ultima >= umbral_alerta:
-        porcentaje = (analisis.variacion_ultima * 100).quantize(CENTIMO)
         analisis.hay_alerta = True
+        # El mensaje se muestra tal cual, así que va formateado en español y con
+        # los decimales que de verdad tiene el precio: el kWh los perdería.
         analisis.mensaje_alerta = (
-            f"El precio ha subido un {porcentaje} % respecto a la compra anterior "
-            f"({analisis.precio_anterior} € → {analisis.precio_actual} €)."
+            f"El precio ha subido un {formato.porcentaje(analisis.variacion_ultima)} "
+            f"respecto a la compra anterior "
+            f"({formato.precio(analisis.precio_anterior)} → "
+            f"{formato.precio(analisis.precio_actual)})."
         )
 
     analisis.por_comercio = comparar_comercios(ordenados)
