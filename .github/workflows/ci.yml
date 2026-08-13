@@ -1,0 +1,151 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Un push nuevo cancela el build anterior de la misma rama: no interesa gastar
+# minutos en revisar código que ya está superado.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (lint y pruebas)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: presupuesto
+          POSTGRES_PASSWORD: presupuesto
+          POSTGRES_DB: presupuesto
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U presupuesto -d presupuesto"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      SECRET_KEY: clave-de-integracion-continua-suficientemente-larga
+      APP_ENV: test
+      DATABASE_URL: postgresql+asyncpg://presupuesto:presupuesto@localhost:5432/presupuesto
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      # Tesseract con diccionario español: sin él se saltan las pruebas de OCR.
+      - name: Instalar Tesseract
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-spa
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Comprobar formato
+        run: ruff format --check app tests
+
+      - name: Analizar código
+        run: ruff check app tests
+
+      - name: Comprobar que las migraciones aplican y se pueden deshacer
+        run: |
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
+
+      - name: Ejecutar pruebas
+        run: python -m pytest tests -q
+
+  frontend:
+    name: Frontend (tipos y build)
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Comprobar tipos
+        run: npx vue-tsc --noEmit
+
+      - name: Compilar
+        run: npm run build
+
+  imagen:
+    name: Imagen Docker
+    runs-on: ubuntu-latest
+    # Solo tiene sentido construir la imagen si el código ya está en verde.
+    needs: [backend, frontend]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Construir la imagen
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: gestor-presupuesto:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Comprobar que la imagen arranca y responde
+        run: |
+          docker network create ci-net
+          docker run -d --name db --network ci-net \
+            -e POSTGRES_USER=presupuesto \
+            -e POSTGRES_PASSWORD=presupuesto \
+            -e POSTGRES_DB=presupuesto \
+            postgres:16-alpine
+          for i in $(seq 1 30); do
+            docker exec db pg_isready -U presupuesto -d presupuesto && break
+            sleep 2
+          done
+          docker run -d --name app --network ci-net -p 8000:8000 \
+            -e SECRET_KEY=clave-de-integracion-continua-suficientemente-larga \
+            -e DATABASE_URL=postgresql+asyncpg://presupuesto:presupuesto@db:5432/presupuesto \
+            gestor-presupuesto:ci
+          # El entrypoint aplica las migraciones antes de servir, así que se le
+          # da margen antes de dar por fallido el arranque.
+          for i in $(seq 1 45); do
+            if curl -fsS http://localhost:8000/api/health; then
+              echo "La aplicación responde."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "La aplicación no ha respondido. Registro del contenedor:"
+          docker logs app
+          exit 1
