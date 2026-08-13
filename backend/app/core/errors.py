@@ -35,11 +35,15 @@ class AppError(Exception):
         codigo: str | None = None,
         estado: int | None = None,
         detalles: list[dict[str, str]] | None = None,
+        cabeceras: dict[str, str] | None = None,
     ) -> None:
         self.mensaje = mensaje or self.mensaje
         self.codigo = codigo or self.codigo
         self.estado = estado or self.estado
         self.detalles = detalles or []
+        # Algunas respuestas de error necesitan cabeceras para ser correctas:
+        # un 429 sin `Retry-After` deja al cliente sin saber cuánto esperar.
+        self.cabeceras = cabeceras or {}
         super().__init__(self.mensaje)
 
 
@@ -68,7 +72,7 @@ class Conflicto(AppError):
 
 
 class ReglaDeNegocio(AppError):
-    estado = status.HTTP_422_UNPROCESSABLE_ENTITY
+    estado = status.HTTP_422_UNPROCESSABLE_CONTENT
     codigo = "regla_de_negocio"
     mensaje = "La operación incumple una regla de negocio."
 
@@ -80,11 +84,16 @@ class DemasiadasPeticiones(AppError):
 
 
 def _respuesta(
-    estado: int, codigo: str, mensaje: str, detalles: list[dict[str, Any]] | None = None
+    estado: int,
+    codigo: str,
+    mensaje: str,
+    detalles: list[dict[str, Any]] | None = None,
+    cabeceras: dict[str, str] | None = None,
 ) -> JSONResponse:
     return JSONResponse(
         status_code=estado,
         content={"error": {"codigo": codigo, "mensaje": mensaje, "detalles": detalles or []}},
+        headers=cabeceras or None,
     )
 
 
@@ -114,7 +123,7 @@ def registrar_manejadores(app: FastAPI) -> None:
 
     @app.exception_handler(AppError)
     async def _app_error(_: Request, exc: AppError) -> JSONResponse:
-        return _respuesta(exc.estado, exc.codigo, exc.mensaje, exc.detalles)
+        return _respuesta(exc.estado, exc.codigo, exc.mensaje, exc.detalles, exc.cabeceras)
 
     @app.exception_handler(RequestValidationError)
     async def _validacion(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -129,7 +138,7 @@ def registrar_manejadores(app: FastAPI) -> None:
                 }
             )
         return _respuesta(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             "datos_invalidos",
             "Revisa los datos del formulario.",
             detalles,
