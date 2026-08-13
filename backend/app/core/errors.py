@@ -114,7 +114,17 @@ _MENSAJES_VALIDACION = {
     "decimal_parsing": "Debe ser un número.",
     "float_parsing": "Debe ser un número.",
     "date_from_datetime_parsing": "La fecha no es válida.",
+    "date_parsing": "La fecha no es válida.",
     "enum": "El valor no está entre las opciones permitidas.",
+    "literal_error": "El valor no está entre las opciones permitidas.",
+    "extra_forbidden": "Este campo no se admite aquí.",
+    "bool_parsing": "Debe ser verdadero o falso.",
+    "uuid_parsing": "El identificador no es válido.",
+    "string_pattern_mismatch": "El formato no es válido.",
+    "too_short": "Faltan elementos.",
+    "too_long": "Hay demasiados elementos.",
+    "multiple_of": "El valor no es un múltiplo válido.",
+    "json_invalid": "El contenido enviado no es un JSON válido.",
 }
 
 
