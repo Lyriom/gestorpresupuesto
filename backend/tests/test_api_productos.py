@@ -208,6 +208,67 @@ async def test_historial_y_estadisticas_de_precio(cliente, entorno):
     assert estadisticas["cheapest_payee"]["name"] == "Energía Ibérica"
 
 
+async def test_registrar_los_precios_del_mas_nuevo_al_mas_viejo_da_lo_mismo(cliente, entorno):
+    """Es el orden de la primera vez: se suben las facturas que uno tiene guardadas.
+
+    La lista se enseña de la más nueva a la más vieja, así que confirmarlas en el
+    orden en que se ven es meterlas al revés. Como la variación se calculaba solo
+    contra lo que ya estaba, ninguna tenía anterior y todas se quedaban a nulo
+    para siempre: el informe de subidas no encontraba nada.
+    """
+    producto = await crear_producto(cliente, name="Aceite de oliva virgen extra 1 L")
+    comercio = await crear_comercio(entorno.household_id, "El Ahorro")
+
+    for fecha, precio in (
+        ("2026-08-07", "11.45"),
+        ("2026-07-09", "9.80"),
+        ("2026-06-05", "8.95"),
+    ):
+        await registrar_precio(
+            cliente,
+            producto,
+            payee_id=str(comercio),
+            observed_at=fecha,
+            unit_price=precio,
+            quantity="2",
+        )
+
+    historial = (await cliente.get(f"/api/v1/products/{producto['id']}/prices")).json()
+    variaciones = [fila["change_pct"] for fila in historial["items"]]
+
+    # De la más nueva a la más vieja: +16,84 %, +9,50 % y la primera sin nada con
+    # que compararse.
+    assert variaciones[0] == pytest.approx(16.84, abs=0.01)
+    assert variaciones[1] == pytest.approx(9.50, abs=0.01)
+    assert variaciones[2] is None
+
+
+async def test_una_compra_intercalada_rehace_la_variacion_de_las_siguientes(cliente, entorno):
+    """Meter una compra vieja del mismo comercio cambia con quién se compara la nueva."""
+    producto = await crear_producto(cliente, name="Café molido natural 250 g")
+    mercadona = await crear_comercio(entorno.household_id, "Mercadona")
+    carrefour = await crear_comercio(entorno.household_id, "Carrefour")
+
+    await registrar_precio(
+        cliente, producto, payee_id=str(mercadona), observed_at="2026-08-10", unit_price="4.00"
+    )
+    await registrar_precio(
+        cliente, producto, payee_id=str(carrefour), observed_at="2026-07-10", unit_price="3.80"
+    )
+    # Antes de esta, la de agosto solo podía compararse con Carrefour.
+    await registrar_precio(
+        cliente, producto, payee_id=str(mercadona), observed_at="2026-06-10", unit_price="3.20"
+    )
+
+    historial = (await cliente.get(f"/api/v1/products/{producto['id']}/prices")).json()
+    agosto = historial["items"][0]
+
+    # RN-63: manda el mismo comercio, así que 4,00 se compara con los 3,20 de
+    # Mercadona en junio y no con los 3,80 de Carrefour en julio.
+    assert agosto["change_basis"] == "same_payee"
+    assert agosto["change_pct"] == pytest.approx(25.0, abs=0.01)
+
+
 async def test_el_mismo_precio_el_mismo_dia_y_comercio_no_se_repite(cliente, entorno):
     producto = await crear_producto(cliente, name="Pan de molde integral")
     comercio = await crear_comercio(entorno.household_id, "El Ahorro")

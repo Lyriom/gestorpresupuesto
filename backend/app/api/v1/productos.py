@@ -554,6 +554,28 @@ async def ultima_observacion(
     return (await sesion.execute(consulta)).scalar_one_or_none()
 
 
+async def observaciones_posteriores(
+    sesion: Any,
+    household_id: uuidlib.UUID,
+    product_id: uuidlib.UUID,
+    *,
+    desde: date,
+    excluir: uuidlib.UUID,
+) -> list[ProductPrice]:
+    """Las observaciones desde una fecha en adelante. Espejo de `ultima_observacion`."""
+    consulta = (
+        select(ProductPrice)
+        .where(
+            ProductPrice.household_id == household_id,
+            ProductPrice.product_id == product_id,
+            ProductPrice.priced_on >= desde,
+            ProductPrice.id != excluir,
+        )
+        .order_by(ProductPrice.priced_on.asc(), ProductPrice.created_at.asc())
+    )
+    return list((await sesion.execute(consulta)).scalars())
+
+
 @dataclass(slots=True)
 class Variacion:
     """Variación calculada y contra qué se ha comparado."""
@@ -669,8 +691,49 @@ async def registrar_observacion(
     )
     alcance.sesion.add(observacion)
     await alcance.sesion.flush()
+    await _rehacer_las_posteriores(alcance, producto, desde=fecha, insertada=observacion.id)
     await refrescar_producto(alcance.sesion, producto)
     return observacion, variacion
+
+
+async def _rehacer_las_posteriores(
+    alcance: AlcanceHogar,
+    producto: Product,
+    *,
+    desde: date,
+    insertada: uuidlib.UUID,
+) -> None:
+    """Rehace la variación de las observaciones que ahora tienen otra anterior.
+
+    La variación mira hacia atrás, contra lo que ya está guardado, y eso vale
+    mientras las facturas se suban según llegan. Pero la primera vez se sube lo
+    que uno tiene, y la lista se enseña de la más nueva a la más vieja: al
+    confirmarlas en ese orden ninguna tenía anterior, todas se quedaban con la
+    variación a nulo **y nada volvía a mirarlas**. El informe de subidas de
+    precio salía vacío con un aceite que había subido un 28 %.
+
+    Se rehacen todas las posteriores y no solo la siguiente porque la
+    comparación prefiere el mismo comercio (RN-63): meter una compra de junio en
+    Mercadona cambia con quién se compara la de agosto en Mercadona aunque por
+    medio haya una de julio en otro sitio. Son unas pocas filas por producto y
+    solo al confirmar una factura, que es cosa de una vez al mes.
+    """
+    for posterior in await observaciones_posteriores(
+        alcance.sesion, alcance.household_id, producto.id, desde=desde, excluir=insertada
+    ):
+        rehecha = await calcular_variacion(
+            alcance.sesion,
+            alcance.household_id,
+            producto.id,
+            precio=posterior.unit_price,
+            unidad=posterior.unit,
+            payee_id=posterior.payee_id,
+            fecha=posterior.priced_on,
+            excluir=posterior.id,
+        )
+        posterior.change_pct = (
+            Decimal(str(rehecha.porcentaje)) if rehecha.porcentaje is not None else None
+        )
 
 
 # --------------------------------------------------------------------------- #
