@@ -88,7 +88,7 @@ function ir(destino: number): void {
               :aria-label="`Página ${n}`"
               @click="ir(n)"
             >
-              <LoaderCircle v-if="cargando && n === pagina" :size="14" class="girando" />
+              <LoaderCircle v-if="cargando && n === pagina" :size="14" class="girando" aria-hidden="true" />
               <template v-else>{{ n }}</template>
             </button>
           </li>
@@ -174,8 +174,9 @@ function ir(destino: number): void {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 32px;
-  height: 32px;
+  /* Objetivo táctil de 44 px (§10); antes 32. */
+  min-width: 44px;
+  height: 44px;
   padding-inline: var(--sp-1);
   border: 1px solid transparent;
   border-radius: var(--r-md);

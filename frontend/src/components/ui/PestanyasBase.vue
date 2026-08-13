@@ -148,7 +148,14 @@ watch(() => [props.modelValue, props.pestanyas.length], () => void nextTick(reco
       </button>
     </div>
 
-    <div :id="idPanel" role="tabpanel" tabindex="-1" class="panel">
+    <!-- El panel toma su nombre de la pestaña activa (§5.10). -->
+    <div
+      :id="idPanel"
+      role="tabpanel"
+      :aria-labelledby="idPestanya(modelValue)"
+      tabindex="-1"
+      class="panel"
+    >
       <slot />
     </div>
   </div>

@@ -95,7 +95,7 @@ defineExpose({
       <span v-else-if="sufijo" class="afijo sufijo">{{ sufijo }}</span>
     </div>
 
-    <p v-if="error" :id="idAyuda" class="mensaje malo-texto" role="alert">{{ error }}</p>
+    <p v-if="error" :id="idAyuda" class="mensaje malo-texto" aria-live="polite">{{ error }}</p>
     <p v-else-if="ayuda" :id="idAyuda" class="mensaje">{{ ayuda }}</p>
   </div>
 </template>
@@ -147,6 +147,14 @@ label {
 .caja:focus-within {
   border-color: var(--c-accent);
   box-shadow: var(--glow-accent);
+}
+/* Anillo de foco real (§5, §10): 2 px de acento con 2 px de separación. El
+   input hace `outline: none` y el brillo de --glow-accent es de 1 px, por
+   debajo del 3:1 exigido al indicador. Se ancla al input para que enfocar un
+   botón de dentro de la caja no ilumine el campo entero. */
+.caja:has(input:focus-visible) {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
 }
 .caja.malo {
   border-color: var(--c-negative);

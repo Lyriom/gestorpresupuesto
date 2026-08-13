@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { ChevronDown, ChevronUp, X } from 'lucide-vue-next'
 import { useMedia } from '@/composables/useMedia'
+import { bloquearFondo, liberarFondo } from '@/lib/capaModal'
 import EsqueletoCarga from './EsqueletoCarga.vue'
 
 const props = withDefaults(
@@ -46,12 +47,42 @@ function cerrar(): void {
   emit('cerrar')
 }
 
+const SELECTOR_FOCO =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+/**
+ * Cuando el cajón bloquea (hoja inferior en móvil) el foco no puede escaparse
+ * al fondo, que además está `inert`: §5.8 le da la misma semántica que al modal.
+ */
+function atraparFoco(evento: KeyboardEvent): void {
+  if (!bloquea.value || evento.key !== 'Tab' || !panel.value) return
+  const focoables = [...panel.value.querySelectorAll<HTMLElement>(SELECTOR_FOCO)].filter(
+    (el) => el.offsetParent !== null,
+  )
+  if (focoables.length === 0) {
+    evento.preventDefault()
+    panel.value.focus()
+    return
+  }
+  const primero = focoables[0]
+  const ultimo = focoables[focoables.length - 1]
+  const activo = document.activeElement
+  if (evento.shiftKey && (activo === primero || activo === panel.value)) {
+    evento.preventDefault()
+    ultimo.focus()
+  } else if (!evento.shiftKey && activo === ultimo) {
+    evento.preventDefault()
+    primero.focus()
+  }
+}
+
 function alTeclear(evento: KeyboardEvent): void {
   if (evento.key === 'Escape') {
     evento.stopPropagation()
     cerrar()
     return
   }
+  atraparFoco(evento)
   if (!props.conNavegacion) return
   // Las flechas solo navegan si el foco no está dentro de un campo de texto.
   const destino = evento.target as HTMLElement
@@ -79,17 +110,14 @@ function finGesto(): void {
   inicioY = null
 }
 
-function bloquearFondo(): void {
-  const barra = window.innerWidth - document.documentElement.clientWidth
-  document.body.style.overflow = 'hidden'
-  if (barra > 0) document.body.style.paddingRight = `${barra}px`
-  document.getElementById('app')?.setAttribute('inert', '')
-}
+/** Esta instancia tiene el fondo bloqueado; sin esto, cerrar un cajón no
+ *  bloqueante quitaba el `inert` que había puesto un modal exterior. */
+let bloqueado = false
 
-function liberarFondo(): void {
-  document.body.style.overflow = ''
-  document.body.style.paddingRight = ''
-  document.getElementById('app')?.removeAttribute('inert')
+function liberar(): void {
+  if (!bloqueado) return
+  bloqueado = false
+  liberarFondo()
 }
 
 watch(
@@ -97,11 +125,21 @@ watch(
   async (abierto) => {
     if (abierto) {
       devolverFocoA = document.activeElement as HTMLElement | null
-      if (bloquea.value) bloquearFondo()
+      if (bloquea.value && !bloqueado) {
+        bloqueado = true
+        bloquearFondo()
+      }
       await nextTick()
-      panel.value?.focus()
+      // Al primer campo si hay; si no, al contenedor (§5.7).
+      const campo = panel.value?.querySelector<HTMLElement>(
+        'input:not([type="hidden"]):not([disabled]):not([readonly]),' +
+          'textarea:not([disabled]):not([readonly]),' +
+          'select:not([disabled]),' +
+          '[role="combobox"]:not([disabled])',
+      )
+      ;(campo ?? panel.value)?.focus()
     } else {
-      liberarFondo()
+      liberar()
       devolverFocoA?.focus()
       devolverFocoA = null
       arrastre.value = 0
@@ -109,7 +147,11 @@ watch(
   },
 )
 
-onBeforeUnmount(liberarFondo)
+onBeforeUnmount(() => {
+  liberar()
+  devolverFocoA?.focus()
+  devolverFocoA = null
+})
 </script>
 
 <template>

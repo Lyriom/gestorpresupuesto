@@ -24,10 +24,10 @@ import EtiquetaCategoria from '@/components/ui/EtiquetaCategoria.vue'
 import ModalBase from '@/components/ui/ModalBase.vue'
 import SelectorBase from '@/components/ui/SelectorBase.vue'
 import { useAvisos } from '@/composables/useAvisos'
-import { euros } from '@/lib/formato'
+import { euros, porcentaje } from '@/lib/formato'
 import { ranuraDeCategoria, useCategorias } from '@/stores/categorias'
 import { useCuentas } from '@/stores/cuentas'
-import { mensajeDeError } from '@/stores/comun'
+import { erroresPorCampo, mensajeDeError } from '@/stores/comun'
 
 const props = withDefaults(
   defineProps<{
@@ -120,7 +120,7 @@ const mensajeReparto = computed(() => {
 
 function porcentajeDeLinea(linea: LineaReparto): string {
   if (totalCentimos.value <= 0 || !linea.centimos) return '—'
-  return `${Math.round((linea.centimos / totalCentimos.value) * 100)} %`
+  return porcentaje(linea.centimos / totalCentimos.value)
 }
 
 const puedeGuardar = computed(() => {
@@ -153,7 +153,14 @@ function reiniciar(conservarCuentaYFecha = true): void {
   }
 }
 
+/**
+ * Cerrar con datos a medias pregunta antes de tirarlos (§4). `ModalBase` avisa
+ * con `descartar`; aquí se decide, que es lo que pide el contrato del modal.
+ */
+const descarteAbierto = ref(false)
+
 function cerrar(): void {
+  descarteAbierto.value = false
   emit('update:abierto', false)
 }
 
@@ -187,6 +194,7 @@ async function guardar(yOtro = false): Promise<void> {
 
   if (totalCentimos.value <= 0) {
     errorImporte.value = 'Introduce un importe mayor que 0.'
+    campoImporte.value?.enfocar()
     return
   }
   if (!esTransferencia.value && modo.value === 'rapido' && !categoriaId.value) {
@@ -236,7 +244,17 @@ async function guardar(yOtro = false): Promise<void> {
       cerrar()
     }
   } catch (e) {
-    errorGeneral.value = mensajeDeError(e, 'No se ha podido guardar el movimiento.')
+    // Un 422 trae `detalles[]` con `campo` y `mensaje`: cada uno va a su control
+    // y solo lo que no encaje en ninguno se queda en la banda general (§7).
+    const campos = erroresPorCampo(e)
+    errorImporte.value = campos.amount ?? null
+    errorTematica.value = campos.category_id ?? campos.splits ?? null
+    const colocados = new Set(['amount', 'category_id', 'splits'])
+    const sobrantes = Object.keys(campos).filter((c) => !colocados.has(c))
+    if (sobrantes.length > 0 || Object.keys(campos).length === 0) {
+      errorGeneral.value = mensajeDeError(e, 'No se ha podido guardar el movimiento.')
+    }
+    if (errorImporte.value) campoImporte.value?.enfocar()
   } finally {
     guardando.value = false
   }
@@ -277,7 +295,7 @@ watch(
     :cambios-sin-guardar="hayCambios"
     @update:abierto="emit('update:abierto', $event)"
     @cerrar="cerrar"
-    @descartar="cerrar"
+    @descartar="descarteAbierto = true"
   >
     <div class="cuerpo">
       <fieldset class="tipos">
@@ -424,6 +442,19 @@ watch(
       </BotonBase>
     </template>
   </ModalBase>
+
+  <ModalBase
+    v-model:abierto="descarteAbierto"
+    titulo="Tienes cambios sin guardar"
+    tamanyo="sm"
+    @cerrar="descarteAbierto = false"
+  >
+    <p class="parrafo">¿Quieres descartarlos?</p>
+    <template #pie>
+      <BotonBase variante="contorno" @click="descarteAbierto = false">Seguir editando</BotonBase>
+      <BotonBase variante="peligro" @click="cerrar">Descartar</BotonBase>
+    </template>
+  </ModalBase>
 </template>
 
 <style scoped>
@@ -529,6 +560,13 @@ watch(
   margin: 0;
   color: var(--c-negative);
   font-size: var(--t-caption);
+}
+
+.parrafo {
+  margin: 0;
+  font-size: var(--t-body);
+  line-height: var(--t-body-lh);
+  color: var(--c-text-2);
 }
 
 .oculto {

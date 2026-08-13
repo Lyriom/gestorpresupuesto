@@ -8,6 +8,7 @@
  */
 import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ArrowUpRight } from 'lucide-vue-next'
 
 import GraficoAreaCashFlow from '@/components/graficos/GraficoAreaCashFlow.vue'
 import GraficoBarras from '@/components/graficos/GraficoBarras.vue'
@@ -17,7 +18,7 @@ import EsqueletoCarga from '@/components/ui/EsqueletoCarga.vue'
 import EstadoVacio from '@/components/ui/EstadoVacio.vue'
 import PestanyasBase from '@/components/ui/PestanyasBase.vue'
 import SelectorBase from '@/components/ui/SelectorBase.vue'
-import { aNumero, etiquetaPeriodo, euros } from '@/lib/formato'
+import { aNumero, etiquetaPeriodo, euros, porcentaje, precioUnitario } from '@/lib/formato'
 import { ranuraDeCategoria } from '@/stores/categorias'
 import { PESTANYAS_INFORME, RANGOS, useInformes, type PestanyaInforme } from '@/stores/informes'
 import BloqueError from './componentes/BloqueError.vue'
@@ -146,9 +147,7 @@ onMounted(() => {
           </div>
           <div>
             <p class="rotulo">Tasa de ahorro</p>
-            <p class="valor num">
-              {{ ((ingresos?.savings_rate ?? 0) * 100).toFixed(1) }} %
-            </p>
+            <p class="valor num">{{ porcentaje(ingresos?.savings_rate ?? 0) }}</p>
           </div>
         </div>
 
@@ -179,7 +178,7 @@ onMounted(() => {
 
         <section class="tarjeta" aria-labelledby="titulo-detalle-tematicas">
           <h2 id="titulo-detalle-tematicas" class="titulo-bloque">Detalle por temática</h2>
-          <div class="envoltorio-tabla">
+          <div class="envoltorio-tabla" tabindex="0">
             <table class="tabla">
               <caption class="oculto">Gasto por temática con su presupuesto</caption>
               <thead>
@@ -196,7 +195,7 @@ onMounted(() => {
                 <tr v-for="r in tematicas" :key="r.category.id">
                   <th scope="row">{{ r.category.name }}</th>
                   <td class="num-col num">{{ euros(r.amount) }}</td>
-                  <td class="num-col num">{{ r.share_pct.toFixed(1) }} %</td>
+                  <td class="num-col num">{{ porcentaje(r.share_pct / 100) }}</td>
                   <td class="num-col num">{{ r.allocated ? euros(r.allocated) : '—' }}</td>
                   <td
                     class="num-col num"
@@ -227,7 +226,7 @@ onMounted(() => {
           cuestan al mes y no por el porcentaje.
         </p>
         <section class="tarjeta">
-          <div class="envoltorio-tabla">
+          <div class="envoltorio-tabla" tabindex="0">
             <table class="tabla">
               <caption class="oculto">Productos que han subido de precio</caption>
               <thead>
@@ -252,9 +251,14 @@ onMounted(() => {
                     </BotonBase>
                   </th>
                   <td>{{ r.payee?.name ?? '—' }}</td>
-                  <td class="num-col num">{{ euros(r.previous_unit_price) }}</td>
-                  <td class="num-col num">{{ euros(r.new_unit_price) }}</td>
-                  <td class="num-col num negativo">+{{ r.change_pct.toFixed(1) }} %</td>
+                  <td class="num-col num">{{ precioUnitario(r.previous_unit_price) }}</td>
+                  <td class="num-col num">{{ precioUnitario(r.new_unit_price) }}</td>
+                  <!-- Subida de precio: flecha + signo además del color (§2.3). -->
+                  <td class="num-col num negativo">
+                    <ArrowUpRight :size="14" aria-hidden="true" />
+                    <span class="oculto">Ha subido</span>
+                    +{{ porcentaje(r.change_pct / 100) }}
+                  </td>
                   <td class="num-col num">
                     {{ r.estimated_monthly_impact ? euros(r.estimated_monthly_impact) : '—' }}
                   </td>
@@ -279,7 +283,7 @@ onMounted(() => {
         />
         <p class="tarjeta caja num">
           Tasa de ahorro del periodo
-          <strong>{{ ((informes.cashFlow?.savings_rate ?? 0) * 100).toFixed(1) }} %</strong>
+          <strong>{{ porcentaje(informes.cashFlow?.savings_rate ?? 0) }}</strong>
           · Neto {{ euros(informes.cashFlow?.net) }}
         </p>
       </template>
@@ -366,6 +370,10 @@ onMounted(() => {
 }
 .num-col {
   text-align: right;
+}
+/* La flecha de variación acompaña a la cifra sin descolgarse de la línea base. */
+.num-col svg {
+  vertical-align: text-bottom;
 }
 .pie-tabla {
   margin: 0;

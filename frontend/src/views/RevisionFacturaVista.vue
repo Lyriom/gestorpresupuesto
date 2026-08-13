@@ -25,7 +25,7 @@ import {
 } from 'lucide-vue-next'
 
 import { centimosDeImporte, importeDeCentimos } from '@/api/comun'
-import { CONFIANZA_ALTA, CONFIANZA_BAJA, ETIQUETA_METODO } from '@/api/facturas'
+import { ETIQUETA_CONFIANZA, ETIQUETA_METODO, tonoConfianza } from '@/api/facturas'
 import BotonBase from '@/components/ui/BotonBase.vue'
 import CampoFecha from '@/components/ui/CampoFecha.vue'
 import CampoImporte from '@/components/ui/CampoImporte.vue'
@@ -34,7 +34,7 @@ import EsqueletoCarga from '@/components/ui/EsqueletoCarga.vue'
 import IndicadorProgreso from '@/components/ui/IndicadorProgreso.vue'
 import SelectorBase from '@/components/ui/SelectorBase.vue'
 import { useAvisos } from '@/composables/useAvisos'
-import { euros } from '@/lib/formato'
+import { euros, porcentaje, precioUnitario } from '@/lib/formato'
 import { useCategorias } from '@/stores/categorias'
 import { useCuentas } from '@/stores/cuentas'
 import { motivoDeRevision, useFacturas, type LineaBorrador } from '@/stores/facturas'
@@ -92,12 +92,6 @@ const pasos = computed(() => {
     },
   ]
 })
-
-function tonoConfianza(valor: number): 'alta' | 'media' | 'baja' {
-  if (valor >= CONFIANZA_ALTA) return 'alta'
-  if (valor >= CONFIANZA_BAJA) return 'media'
-  return 'baja'
-}
 
 function faltaTematica(linea: LineaBorrador): boolean {
   return intentadoGuardar.value && !linea.is_excluded && !linea.category_id
@@ -310,9 +304,9 @@ onBeforeUnmount(() => facturas.detenerSondeo())
         </div>
         <p class="lectura">
           Lectura: <span class="chip">{{ ETIQUETA_METODO[factura.extraction_method] }}</span>
-          · Confianza global {{ Math.round(factura.confidence * 100) }} %
+          · Confianza global {{ porcentaje(factura.confidence, 0) }}
           <span :class="`confianza--${tonoConfianza(factura.confidence)}`">
-            · {{ tonoConfianza(factura.confidence) === 'alta' ? 'Alta' : tonoConfianza(factura.confidence) === 'media' ? 'Media' : 'Baja' }}
+            · {{ ETIQUETA_CONFIANZA[tonoConfianza(factura.confidence)] }}
           </span>
           <BotonBase variante="enlace" tamanyo="sm" :href="`/api/v1/invoices/${factura.id}/file?disposition=inline`">
             Ver PDF original
@@ -332,7 +326,7 @@ onBeforeUnmount(() => facturas.detenerSondeo())
           No se ha detectado ninguna línea en este documento.
         </p>
 
-        <div v-else class="envoltorio-tabla">
+        <div v-else class="envoltorio-tabla" tabindex="0">
           <table class="tabla">
             <caption class="oculto">
               Líneas de la factura, editables, con su confianza de lectura
@@ -425,7 +419,7 @@ onBeforeUnmount(() => facturas.detenerSondeo())
                     />
                   </td>
                   <td class="col-conf num" :class="`confianza--${tonoConfianza(linea.confidence)}`">
-                    {{ Math.round(linea.confidence * 100) }} %
+                    {{ porcentaje(linea.confidence, 0) }}
                   </td>
                   <td class="col-icono">
                     <BotonBase
@@ -445,8 +439,9 @@ onBeforeUnmount(() => facturas.detenerSondeo())
                 <tr v-if="linea.change_pct !== null && linea.change_pct !== undefined" class="fila-motivo">
                   <td />
                   <td :colspan="8" class="motivo-precio">
-                    Antes {{ euros(linea.last_unit_price) }} ·
-                    {{ linea.change_pct > 0 ? '+' : '' }}{{ linea.change_pct.toFixed(1) }} %
+                    Antes {{ precioUnitario(linea.last_unit_price) }} ·
+                    <span class="oculto">{{ linea.change_pct > 0 ? 'Ha subido' : 'Ha bajado' }}</span>
+                    {{ linea.change_pct > 0 ? '+' : '' }}{{ porcentaje(linea.change_pct / 100) }}
                     frente a la última compra
                   </td>
                 </tr>

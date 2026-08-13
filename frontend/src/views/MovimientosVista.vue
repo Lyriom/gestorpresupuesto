@@ -20,6 +20,8 @@ import BotonBase from '@/components/ui/BotonBase.vue'
 import CajonLateral from '@/components/ui/CajonLateral.vue'
 import CampoFecha from '@/components/ui/CampoFecha.vue'
 import CampoImporte from '@/components/ui/CampoImporte.vue'
+import CampoTexto from '@/components/ui/CampoTexto.vue'
+import EstadoVacio from '@/components/ui/EstadoVacio.vue'
 import EtiquetaCategoria from '@/components/ui/EtiquetaCategoria.vue'
 import InterruptorBase from '@/components/ui/InterruptorBase.vue'
 import ModalBase from '@/components/ui/ModalBase.vue'
@@ -27,7 +29,7 @@ import PaginacionBase from '@/components/ui/PaginacionBase.vue'
 import SelectorBase from '@/components/ui/SelectorBase.vue'
 import TablaDatos, { type ColumnaTabla } from '@/components/ui/TablaDatos.vue'
 import { useAvisos } from '@/composables/useAvisos'
-import { euros, fechaCorta } from '@/lib/formato'
+import { euros, fechaCorta, porcentaje } from '@/lib/formato'
 import { aQuery, aplicarQueryAlStore, deQuery } from '@/router'
 import { ranuraDeCategoria, useCategorias } from '@/stores/categorias'
 import { mensajeDeError } from '@/stores/comun'
@@ -143,6 +145,16 @@ const chips = computed(() => {
   return salida
 })
 
+/**
+ * Criterio aplicado, en texto. El estado vacío por filtro tiene que repetirlo
+ * para que se vea por qué no sale nada (§2.4).
+ */
+const resumenDeFiltros = computed(() => {
+  const partes = chips.value.map((c) => c.etiqueta)
+  if (lista.filtros.q) partes.unshift(`Búsqueda: «${lista.filtros.q}»`)
+  return partes.length > 0 ? `Filtros aplicados: ${partes.join(' · ')}.` : undefined
+})
+
 /** Vuelca el estado del store en la URL, sin apilar entradas de historial. */
 function sincronizarUrl(): void {
   const query = aQuery({
@@ -194,9 +206,34 @@ function abrirMasFiltros(): void {
   filtrosAbiertos.value = true
 }
 
-async function eliminar(m: Movimiento): Promise<void> {
+/**
+ * Borrar un movimiento es destructivo y §4 exige confirmarlo nombrando importe y
+ * fecha, así que primero se pregunta.
+ */
+const borradoAbierto = ref(false)
+const enBorrado = ref<Movimiento | null>(null)
+
+function pedirBorrado(m: Movimiento): void {
+  enBorrado.value = m
+  borradoAbierto.value = true
+}
+
+const textoBorrado = computed(() => {
+  const m = enBorrado.value
+  if (!m) return ''
+  const tipo = m.kind === 'income' ? 'el ingreso' : 'el gasto'
+  return `Se eliminará ${tipo} de ${euros(m.amount)} del ${fechaCorta(m.date)}. Esta acción no se puede deshacer.`
+})
+
+async function confirmarBorrado(): Promise<void> {
+  const m = enBorrado.value
+  if (!m) return
   const ok = await lista.borrar(m.id)
-  if (ok) avisos.exito('Movimiento eliminado.')
+  if (ok) {
+    avisos.exito('Movimiento eliminado.')
+    borradoAbierto.value = false
+    enBorrado.value = null
+  }
 }
 
 function abrirCompleto(): void {
@@ -333,6 +370,29 @@ watch(
       @reintentar="lista.cargar()"
       @quitar-filtros="quitarTodos"
     >
+      <template #vacio>
+        <EstadoVacio
+          v-if="lista.hayFiltros"
+          tipo="sin-filtros"
+          titulo="Ningún movimiento coincide con estos filtros."
+          :descripcion="resumenDeFiltros"
+          :nivel="3"
+        >
+          <template #accion>
+            <BotonBase variante="contorno" @click="quitarTodos">Quitar todos</BotonBase>
+          </template>
+        </EstadoVacio>
+        <EstadoVacio
+          v-else
+          titulo="Todavía no has apuntado ningún movimiento."
+          :nivel="3"
+        >
+          <template #accion>
+            <BotonBase variante="primaria" @click="altaAbierta = true">Añadir el primero</BotonBase>
+          </template>
+        </EstadoVacio>
+      </template>
+
       <template #celda-date="{ fila }">{{ fechaCorta(fila.date) }}</template>
 
       <template #celda-description="{ fila }">
@@ -371,7 +431,7 @@ watch(
               />
               <span class="num">{{ euros(s.amount) }}</span>
               <span class="num tenue">
-                {{ Math.round((Number(s.amount) / Number(fila.amount)) * 100) }} %
+                {{ porcentaje(Number(s.amount) / Number(fila.amount)) }}
               </span>
             </li>
           </ul>
@@ -477,7 +537,7 @@ watch(
       </div>
 
       <template #pie>
-        <BotonBase variante="contorno" @click="quitarTodos">Quitar filtros</BotonBase>
+        <BotonBase variante="contorno" @click="quitarTodos">Quitar todos</BotonBase>
         <BotonBase variante="primaria" @click="aplicarMasFiltros">Aplicar filtros</BotonBase>
       </template>
     </ModalBase>
@@ -566,7 +626,7 @@ watch(
         <BotonBase
           v-if="lista.seleccionado"
           variante="peligro-fantasma"
-          @click="eliminar(lista.seleccionado)"
+          @click="pedirBorrado(lista.seleccionado)"
         >
           Eliminar
         </BotonBase>
@@ -587,6 +647,23 @@ watch(
       :modo-inicial="modoAlta"
       @guardado="lista.cargar()"
     />
+
+    <ModalBase
+      v-model:abierto="borradoAbierto"
+      titulo="¿Eliminar este movimiento?"
+      tamanyo="sm"
+      :guardando="lista.guardando"
+      :error="lista.error ?? undefined"
+      @cerrar="borradoAbierto = false"
+    >
+      <p class="parrafo">{{ textoBorrado }}</p>
+      <template #pie>
+        <BotonBase variante="contorno" @click="borradoAbierto = false">Cancelar</BotonBase>
+        <BotonBase variante="peligro" :cargando="lista.guardando" @click="confirmarBorrado">
+          Eliminar
+        </BotonBase>
+      </template>
+    </ModalBase>
   </div>
 </template>
 
@@ -595,6 +672,12 @@ watch(
   display: flex;
   flex-direction: column;
   gap: var(--sp-4);
+}
+.parrafo {
+  margin: 0;
+  font-size: var(--t-body);
+  line-height: var(--t-body-lh);
+  color: var(--c-text-2);
 }
 .cabecera {
   display: flex;

@@ -76,7 +76,7 @@ function construirUrl(ruta: string, params?: OpcionesPeticion['params']): string
 
 async function interpretarError(respuesta: Response): Promise<ApiError> {
   let codigo = 'error_desconocido'
-  let mensaje = `Error ${respuesta.status}`
+  let mensaje = 'No se ha podido completar la operación. Inténtalo de nuevo.'
   let detalles: DetalleValidacion[] = []
   try {
     const datos = await respuesta.json()

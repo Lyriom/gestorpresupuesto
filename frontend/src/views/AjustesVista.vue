@@ -19,7 +19,7 @@ import ModalBase from '@/components/ui/ModalBase.vue'
 import SelectorBase from '@/components/ui/SelectorBase.vue'
 import { useAvisos } from '@/composables/useAvisos'
 import { useTema, type PreferenciaTema } from '@/composables/useTema'
-import { tiempoRelativo } from '@/lib/formato'
+import { porcentaje, tiempoRelativo } from '@/lib/formato'
 import { SECCIONES_AJUSTES, useAjustes, type SeccionAjustes } from '@/stores/ajustes'
 import { mensajeDeError } from '@/stores/comun'
 import { useSesion } from '@/stores/sesion'
@@ -256,8 +256,8 @@ watch(() => sesion.usuario?.id, volcarPerfil)
             />
             <p class="ayuda num">
               Aviso de presupuesto al
-              {{ Math.round(ajustes.ajustes.budget_alert_pct * 100) }} % consumido · aviso de subida
-              de precio a partir de +{{ ajustes.ajustes.price_increase_pct }} % · duplicados en una
+              {{ porcentaje(ajustes.ajustes.budget_alert_pct, 0) }} consumido · aviso de subida
+              de precio a partir de +{{ porcentaje(ajustes.ajustes.price_increase_pct / 100, 0) }} · duplicados en una
               ventana de {{ ajustes.ajustes.duplicate_window_days }} días.
             </p>
           </div>

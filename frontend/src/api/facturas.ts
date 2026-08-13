@@ -51,6 +51,22 @@ export const CONFIANZA_BAJA = 0.6
 /** A partir de aquí la confianza es alta y la línea no pide revisión. */
 export const CONFIANZA_ALTA = 0.85
 
+export type TonoConfianza = 'alta' | 'media' | 'baja'
+
+/** Tramo de una confianza de lectura (§2.9). Vivía repetido en tres vistas. */
+export function tonoConfianza(valor: number): TonoConfianza {
+  if (valor >= CONFIANZA_ALTA) return 'alta'
+  if (valor >= CONFIANZA_BAJA) return 'media'
+  return 'baja'
+}
+
+/** La palabra acompaña siempre al número: el color no informa solo (§2.3). */
+export const ETIQUETA_CONFIANZA: Record<TonoConfianza, string> = {
+  alta: 'Alta',
+  media: 'Media',
+  baja: 'Baja',
+}
+
 export interface DescripcionNormalizada {
   canonical: string
   brand_guess?: string | null

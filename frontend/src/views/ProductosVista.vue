@@ -13,7 +13,7 @@ import EstadoVacio from '@/components/ui/EstadoVacio.vue'
 import InterruptorBase from '@/components/ui/InterruptorBase.vue'
 import PaginacionBase from '@/components/ui/PaginacionBase.vue'
 import TablaDatos, { type ColumnaTabla } from '@/components/ui/TablaDatos.vue'
-import { euros, fechaCorta } from '@/lib/formato'
+import { fechaCorta, porcentaje, precioUnitario } from '@/lib/formato'
 import { useProductos } from '@/stores/productos'
 
 type Fila = Producto & Record<string, unknown>
@@ -104,7 +104,7 @@ onMounted(recargar)
       </template>
 
       <template #celda-last_unit_price="{ fila }">
-        {{ fila.last_unit_price ? euros(fila.last_unit_price) : '—' }}
+        {{ precioUnitario(fila.last_unit_price) }}
         <span v-if="fila.unit" class="unidad">/{{ fila.unit }}</span>
       </template>
 
@@ -117,7 +117,10 @@ onMounted(recargar)
           <ArrowUpRight v-if="fila.change_pct > 0" :size="14" aria-hidden="true" />
           <ArrowDownRight v-else-if="fila.change_pct < 0" :size="14" aria-hidden="true" />
           <Minus v-else :size="14" aria-hidden="true" />
-          {{ fila.change_pct > 0 ? '+' : '' }}{{ fila.change_pct.toFixed(1) }} %
+          <span class="oculto">
+            {{ fila.change_pct > 0 ? 'Ha subido' : fila.change_pct < 0 ? 'Ha bajado' : 'Igual' }}
+          </span>
+          {{ fila.change_pct > 0 ? '+' : '' }}{{ porcentaje(fila.change_pct / 100) }}
         </span>
         <span v-else class="tenue">{{ ETIQUETA_TENDENCIA[fila.trend] }}</span>
       </template>

@@ -11,15 +11,15 @@ import { useRouter } from 'vue-router'
 import { FileUp } from 'lucide-vue-next'
 
 import {
-  CONFIANZA_ALTA,
-  CONFIANZA_BAJA,
+  ETIQUETA_CONFIANZA,
   ETIQUETA_ESTADO_FACTURA,
+  tonoConfianza,
   type Factura,
 } from '@/api/facturas'
 import BotonBase from '@/components/ui/BotonBase.vue'
 import EsqueletoCarga from '@/components/ui/EsqueletoCarga.vue'
 import EstadoVacio from '@/components/ui/EstadoVacio.vue'
-import { euros, fechaCorta } from '@/lib/formato'
+import { euros, fechaCorta, porcentaje } from '@/lib/formato'
 import { useFacturas } from '@/stores/facturas'
 import { useSesion } from '@/stores/sesion'
 import BloqueError from './componentes/BloqueError.vue'
@@ -41,15 +41,7 @@ const mensajeFormato = computed(
 
 /** Alta, media o baja, con el número siempre al lado (§2.9). */
 function etiquetaConfianza(valor: number): string {
-  if (valor >= CONFIANZA_ALTA) return 'Confianza alta'
-  if (valor >= CONFIANZA_BAJA) return 'Confianza media'
-  return 'Confianza baja'
-}
-
-function tonoConfianza(valor: number): string {
-  if (valor >= CONFIANZA_ALTA) return 'alta'
-  if (valor >= CONFIANZA_BAJA) return 'media'
-  return 'baja'
+  return `Confianza ${ETIQUETA_CONFIANZA[tonoConfianza(valor)].toLowerCase()}`
 }
 
 function accionDe(f: Factura): string {
@@ -163,7 +155,7 @@ onMounted(() => {
             {{ ETIQUETA_ESTADO_FACTURA[f.status] }}
           </span>
           <span class="confianza" :class="`confianza--${tonoConfianza(f.confidence)}`">
-            {{ etiquetaConfianza(f.confidence) }} · {{ Math.round(f.confidence * 100) }} %
+            {{ etiquetaConfianza(f.confidence) }} · {{ porcentaje(f.confidence, 0) }}
           </span>
           <BotonBase variante="fantasma" tamanyo="sm" @click="irA(f)">{{ accionDe(f) }}</BotonBase>
         </li>

@@ -61,7 +61,7 @@ const cifras = computed<Cifra[]>(() => {
     {
       clave: 'ingresos',
       etiqueta: 'Ingresos',
-      valor: euros(ingresos),
+      valor: euros(ingresos, { signoSiempre: true }),
       nota: ingresos > 0 ? 'Lo que ha entrado este mes' : 'Todavía sin ingresos registrados',
       tono: 'neutro',
       icono: 'entrada',
@@ -80,7 +80,7 @@ const cifras = computed<Cifra[]>(() => {
     {
       clave: 'gastado',
       etiqueta: 'Gastado',
-      valor: euros(gastado),
+      valor: gastado > 0 ? `-${euros(gastado)}` : euros(gastado),
       nota: `${porcentaje(pctGastado / 100)} de la barra`,
       tono: 'neutro',
       icono: 'salida',

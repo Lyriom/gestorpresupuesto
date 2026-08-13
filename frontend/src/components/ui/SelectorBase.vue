@@ -215,7 +215,7 @@ onClickOutside(raiz, () => cerrar(false))
       <ChevronDown :size="16" class="chevron" aria-hidden="true" />
     </button>
 
-    <p v-if="errorVisible" :id="idAyuda" class="mensaje malo-texto" role="alert">
+    <p v-if="errorVisible" :id="idAyuda" class="mensaje malo-texto" aria-live="polite">
       <CircleAlert :size="14" aria-hidden="true" />{{ errorVisible }}
     </p>
     <p v-else-if="ayuda" :id="idAyuda" class="mensaje">{{ ayuda }}</p>

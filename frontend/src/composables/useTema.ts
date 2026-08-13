@@ -54,16 +54,19 @@ const tema = computed<Tema>(() => {
   return preferencia.value
 })
 
-const COLOR_BARRA: Record<Tema, string> = { dark: '#0e1116', light: '#f2f5f8' }
-
 watch(
   tema,
   (valor) => {
     if (typeof document === 'undefined') return
     document.documentElement.dataset.theme = valor
-    document
-      .querySelector('meta[name="theme-color"]')
-      ?.setAttribute('content', COLOR_BARRA[valor])
+    // El color de la barra del navegador sale del propio token, no de una copia
+    // del hex: `content` no acepta `var()`, así que se resuelve al aplicarlo.
+    const fondo = getComputedStyle(document.documentElement)
+      .getPropertyValue('--c-app-bg')
+      .trim()
+    if (fondo) {
+      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', fondo)
+    }
     escribir(CLAVE_RESUELTO, valor)
   },
   { immediate: true },

@@ -16,7 +16,9 @@ const props = withDefaults(
 
 const emit = defineEmits<{ 'update:modelValue': [valor: boolean] }>()
 
-const idDescripcion = `${useId()}-desc`
+const base = useId()
+const idDescripcion = `${base}-desc`
+const idTitulo = `${base}-titulo`
 
 function alternar(): void {
   if (props.deshabilitado) return
@@ -35,12 +37,15 @@ function alternar(): void {
       :aria-disabled="deshabilitado ? 'true' : undefined"
       :aria-describedby="descripcion ? idDescripcion : undefined"
       :aria-label="etiquetaOculta ? etiqueta : undefined"
+      :aria-labelledby="etiquetaOculta ? undefined : idTitulo"
       @click="alternar"
     >
       <span class="pomo" aria-hidden="true" />
     </button>
     <div v-if="!etiquetaOculta" class="textos">
-      <span class="titulo" @click="alternar">{{ etiqueta }}</span>
+      <!-- El botón toma su nombre de aquí: con la etiqueta visible no llevaba
+           `aria-label`, así que el interruptor se anunciaba sin nombre. -->
+      <span :id="idTitulo" class="titulo" @click="alternar">{{ etiqueta }}</span>
       <span v-if="descripcion" :id="idDescripcion" class="ayuda">{{ descripcion }}</span>
     </div>
   </div>

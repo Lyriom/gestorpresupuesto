@@ -41,7 +41,7 @@ const ICONOS = {
             {{ a.accion.etiqueta }}
           </button>
         </div>
-        <button type="button" class="cerrar" aria-label="Cerrar el aviso" @click="cerrar(a.id)">
+        <button type="button" class="cerrar toque-44" aria-label="Cerrar el aviso" @click="cerrar(a.id)">
           <X :size="14" aria-hidden="true" />
         </button>
         <span

@@ -20,7 +20,7 @@ import {
   type Yo,
 } from '@/api/auth'
 import { periodoDe } from '@/lib/formato'
-import { mensajeDeError } from './comun'
+import { erroresPorCampo, mensajeDeError } from './comun'
 
 export const useSesion = defineStore('sesion', () => {
   const usuario = ref<Yo | null>(null)
@@ -33,6 +33,12 @@ export const useSesion = defineStore('sesion', () => {
   const cargando = ref(false)
   const enviando = ref(false)
   const error = ref<string | null>(null)
+  /**
+   * Errores por campo del último envío, con la clave del cuerpo de la petición
+   * (`email`, `password`, `name`). §2.1 pide que el correo ya registrado se
+   * ancle al campo además de salir en la banda general.
+   */
+  const erroresCampo = ref<Record<string, string>>({})
 
   const autenticado = computed(() => usuario.value !== null)
   const necesitaOnboarding = computed(
@@ -96,6 +102,7 @@ export const useSesion = defineStore('sesion', () => {
   async function entrar(credenciales: LoginCrear): Promise<boolean> {
     enviando.value = true
     error.value = null
+    erroresCampo.value = {}
     try {
       // La cookie CSRF tiene que existir antes del primer POST (§2.2).
       await apiAuth.csrf().catch(() => undefined)
@@ -104,6 +111,7 @@ export const useSesion = defineStore('sesion', () => {
       return autenticado.value
     } catch (e) {
       error.value = mensajeDeError(e, 'El correo o la contraseña no son correctos.')
+      erroresCampo.value = erroresPorCampo(e)
       return false
     } finally {
       enviando.value = false
@@ -113,6 +121,7 @@ export const useSesion = defineStore('sesion', () => {
   async function registrar(datos: RegistroCrear): Promise<boolean> {
     enviando.value = true
     error.value = null
+    erroresCampo.value = {}
     try {
       await apiAuth.csrf().catch(() => undefined)
       await apiAuth.registrar(datos)
@@ -120,6 +129,7 @@ export const useSesion = defineStore('sesion', () => {
       return autenticado.value
     } catch (e) {
       error.value = mensajeDeError(e, 'No se ha podido crear la cuenta.')
+      erroresCampo.value = erroresPorCampo(e)
       return false
     } finally {
       enviando.value = false
@@ -217,6 +227,7 @@ export const useSesion = defineStore('sesion', () => {
     cargando,
     enviando,
     error,
+    erroresCampo,
     autenticado,
     necesitaOnboarding,
     registroAbierto,

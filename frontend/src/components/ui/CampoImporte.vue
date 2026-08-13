@@ -111,7 +111,7 @@ function posicionTras(s: string, cuantos: number): number {
 
 function fijarCentimos(centimos: number): void {
   if (centimos > tope.value) {
-    errorInterno.value = `El importe no puede pasar de ${euros(tope.value / 100)}`
+    errorInterno.value = `El importe no puede pasar de ${euros(tope.value / 100)}.`
     emit('update:modelValue', null)
     return
   }
@@ -176,7 +176,7 @@ function alSalir(): void {
   const partes = bruto.split('+').map((p) => p.trim()).filter(Boolean)
   const valores = partes.map(parsearImporte)
   if (valores.some((v) => v === null)) {
-    errorInterno.value = 'Introduce un importe con el formato 1.234,56'
+    errorInterno.value = 'Introduce un importe con el formato 1.234,56.'
     return
   }
   if (partes.length > 1) {
@@ -257,7 +257,7 @@ defineExpose({ enfocar: () => campo.value?.focus() })
       <button type="button" aria-label="Borrar el importe" @click="vaciar">C</button>
     </div>
 
-    <p v-if="errorVisible" :id="idAyuda" class="mensaje malo-texto" role="alert">
+    <p v-if="errorVisible" :id="idAyuda" class="mensaje malo-texto" aria-live="polite">
       <CircleAlert :size="14" aria-hidden="true" />{{ errorVisible }}
     </p>
     <p v-else :id="idAyuda" class="mensaje">
@@ -308,6 +308,14 @@ label {
 .caja:focus-within {
   border-color: var(--c-accent);
   box-shadow: var(--glow-accent);
+}
+/* Anillo de foco real (§5, §10): 2 px de acento con 2 px de separación. El
+   input hace `outline: none` y el brillo de --glow-accent es de 1 px, por
+   debajo del 3:1 exigido al indicador. Se ancla al input para que enfocar un
+   botón de dentro de la caja no ilumine el campo entero. */
+.caja:has(input:focus-visible) {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
 }
 .caja.malo {
   border-color: var(--c-negative);

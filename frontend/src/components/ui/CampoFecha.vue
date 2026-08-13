@@ -224,11 +224,11 @@ function alSalir(): void {
   }
   const iso = deMascara(texto.value)
   if (!iso) {
-    errorInterno.value = 'Introduce una fecha con el formato 13/08/2026'
+    errorInterno.value = 'Introduce una fecha con el formato 13/08/2026.'
     return
   }
   if (fueraDeRango(iso)) {
-    errorInterno.value = 'Esa fecha está fuera del periodo permitido'
+    errorInterno.value = 'Esa fecha está fuera del periodo permitido.'
     return
   }
   errorInterno.value = null
@@ -282,7 +282,7 @@ onClickOutside(raiz, () => cerrar(false))
       </button>
     </div>
 
-    <p v-if="errorVisible" :id="idAyuda" class="mensaje malo-texto" role="alert">
+    <p v-if="errorVisible" :id="idAyuda" class="mensaje malo-texto" aria-live="polite">
       <CircleAlert :size="14" aria-hidden="true" />{{ errorVisible }}
     </p>
     <p v-else :id="idAyuda" class="mensaje">
@@ -391,6 +391,14 @@ label {
 .caja:focus-within {
   border-color: var(--c-accent);
   box-shadow: var(--glow-accent);
+}
+/* Anillo de foco real (§5, §10): 2 px de acento con 2 px de separación. El
+   input hace `outline: none` y el brillo de --glow-accent es de 1 px, por
+   debajo del 3:1 exigido al indicador. Se ancla al input para que enfocar un
+   botón de dentro de la caja no ilumine el campo entero. */
+.caja:has(input:focus-visible) {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
 }
 .caja.malo {
   border-color: var(--c-negative);

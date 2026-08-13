@@ -133,6 +133,19 @@ function alternarSeleccion(clave: string | number): void {
 const anchoTotal = computed(
   () => columnasVisibles.value.length + (props.expandible ? 1 : 0) + (props.seleccionables ? 1 : 0),
 )
+
+/**
+ * Ficha de móvil (§5.6): título · importe a la derecha · dos líneas de
+ * metadatos. La columna que hace de importe se calcula una sola vez para poder
+ * excluirla de los metadatos: si no, en Productos el precio salía dos veces.
+ */
+const columnaImporte = computed(() => columnasVisibles.value.find((c) => c.numerica))
+const columnasMeta = computed(() =>
+  columnasVisibles.value
+    .slice(1)
+    .filter((c) => c.clave !== columnaImporte.value?.clave)
+    .slice(0, 2),
+)
 </script>
 
 <template>
@@ -187,18 +200,24 @@ const anchoTotal = computed(
               </slot>
             </span>
             <span class="ficha-meta">
-              <template v-for="c in columnasVisibles.slice(1, 3)" :key="c.clave">
-                <span>{{ textoCelda(c, fila) }}</span>
+              <template v-for="c in columnasMeta" :key="c.clave">
+                <span>
+                  <!-- El mismo slot que en escritorio: si no, la ficha de móvil
+                       pintaba el valor crudo de la API en vez del formateado. -->
+                  <slot :name="`celda-${c.clave}`" :fila="fila" :valor="textoCelda(c, fila)">
+                    {{ textoCelda(c, fila) }}
+                  </slot>
+                </span>
               </template>
             </span>
           </button>
-          <span
-            v-for="c in columnasVisibles.filter((c) => c.numerica).slice(0, 1)"
-            :key="c.clave"
-            class="ficha-importe num"
-          >
-            <slot :name="`celda-${c.clave}`" :fila="fila" :valor="textoCelda(c, fila)">
-              {{ textoCelda(c, fila) }}
+          <span v-if="columnaImporte" class="ficha-importe num">
+            <slot
+              :name="`celda-${columnaImporte.clave}`"
+              :fila="fila"
+              :valor="textoCelda(columnaImporte, fila)"
+            >
+              {{ textoCelda(columnaImporte, fila) }}
             </slot>
           </span>
           <ChevronRight :size="16" class="ficha-chevron" aria-hidden="true" />
@@ -208,23 +227,25 @@ const anchoTotal = computed(
         <slot name="vacio">
           <EstadoVacio
             :tipo="vacioPorFiltro ? 'sin-filtros' : 'primer-uso'"
-            :titulo="vacioPorFiltro ? 'Ningún resultado con estos filtros' : 'Todavía no hay datos'"
+            :titulo="vacioPorFiltro ? 'Ningún resultado coincide con estos filtros.' : 'Todavía no hay nada aquí.'"
           />
         </slot>
       </li>
     </ul>
 
     <!-- Escritorio y tableta: tabla semántica. -->
-    <div v-else class="marco" tabindex="0">
+    <div v-else class="marco" tabindex="0" role="region" :aria-label="titulo">
       <table :class="[`d-${densidad}`, { recargando }]" :aria-busy="cargando">
+        <!-- §5.13: en carga, el contenedor lleva texto oculto además de aria-busy. -->
         <caption :class="{ 'oculto-visualmente': tituloOculto }">
-          {{ titulo }}
+          {{ cargando ? `Cargando ${titulo}` : titulo }}
         </caption>
         <thead>
           <tr :style="{ '--alto': altoFila }">
             <th v-if="seleccionables" scope="col" class="estrecha fija-inicio">
               <input
                 type="checkbox"
+                class="toque-44"
                 :checked="todasSeleccionadas"
                 :indeterminate="algunaSeleccionada"
                 aria-label="Seleccionar todas las filas"
@@ -281,7 +302,6 @@ const anchoTotal = computed(
           <template v-for="fila in filas" :key="claveFila(fila)">
             <tr
               :style="{ '--alto': altoFila }"
-              :aria-selected="seleccionables ? seleccionadas.includes(claveFila(fila)) : undefined"
               :class="{ elegida: seleccionadas.includes(claveFila(fila)) }"
               @click="emit('filaClic', fila)"
             >
@@ -297,7 +317,7 @@ const anchoTotal = computed(
               <td v-if="expandible" class="estrecha">
                 <button
                   type="button"
-                  class="expandir"
+                  class="expandir toque-44"
                   :aria-expanded="abiertas.has(claveFila(fila))"
                   :aria-controls="`detalle-${claveFila(fila)}`"
                   :aria-label="abiertas.has(claveFila(fila)) ? 'Ocultar detalle' : 'Ver detalle'"
@@ -350,11 +370,9 @@ const anchoTotal = computed(
         <slot name="vacio">
           <EstadoVacio
             :tipo="vacioPorFiltro ? 'sin-filtros' : 'primer-uso'"
-            :titulo="vacioPorFiltro ? 'Ningún resultado con estos filtros' : 'Todavía no hay datos'"
+            :titulo="vacioPorFiltro ? 'Ningún resultado coincide con estos filtros.' : 'Todavía no hay nada aquí.'"
             :descripcion="
-              vacioPorFiltro
-                ? 'Prueba a relajar algún criterio para ver más resultados.'
-                : 'Cuando registres el primer movimiento aparecerá en esta tabla.'
+              vacioPorFiltro ? 'Prueba a quitar algún filtro para ver más resultados.' : undefined
             "
           >
             <template v-if="vacioPorFiltro" #accion>
@@ -397,8 +415,9 @@ const anchoTotal = computed(
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 28px;
+  /* 44 px de ancho para que las dos áreas no se solapen al ampliarlas. */
+  width: 44px;
+  height: 36px;
   border: 0;
   border-radius: var(--r-sm);
   background: none;

@@ -65,7 +65,15 @@ export function sobreCarril(color: string, pct: number): string {
   return `color-mix(in oklab, ${color} ${pct}%, var(--c-track))`
 }
 
-/** Aclarado de hover: el mismo hue un 8 % más luminoso. */
+/**
+ * Realce de hover: el mismo hue movido un `pct %` hacia la tinta principal.
+ *
+ * Se mezcla contra `--c-text-1` y no contra `white` a propósito. El token se
+ * invierte con el tema (casi blanco en oscuro, casi negro en claro), así que en
+ * oscuro cumple el «color-mix con blanco al 8 %» del §6.5 y en claro oscurece,
+ * que es la dirección correcta: aclarar sobre una tarjeta blanca deslavaba el
+ * hue en vez de destacarlo.
+ */
 export function aclarado(color: string, pct = 8): string {
-  return `color-mix(in oklab, white ${pct}%, ${color})`
+  return `color-mix(in oklab, var(--c-text-1) ${pct}%, ${color})`
 }

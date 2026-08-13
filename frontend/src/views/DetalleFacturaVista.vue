@@ -9,14 +9,19 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Download, Pencil, Trash2 } from 'lucide-vue-next'
 
-import { apiFacturas, ETIQUETA_METODO } from '@/api/facturas'
+import {
+  apiFacturas,
+  ETIQUETA_CONFIANZA,
+  ETIQUETA_METODO,
+  tonoConfianza,
+} from '@/api/facturas'
 import { apiMovimientos, type Movimiento } from '@/api/movimientos'
 import BotonBase from '@/components/ui/BotonBase.vue'
 import EsqueletoCarga from '@/components/ui/EsqueletoCarga.vue'
 import EtiquetaCategoria from '@/components/ui/EtiquetaCategoria.vue'
 import ModalBase from '@/components/ui/ModalBase.vue'
 import { useAvisos } from '@/composables/useAvisos'
-import { euros, fechaCorta } from '@/lib/formato'
+import { cantidad, euros, fechaCorta, porcentaje, precioUnitario } from '@/lib/formato'
 import { ranuraDeCategoria } from '@/stores/categorias'
 import { useFacturas } from '@/stores/facturas'
 import BloqueError from './componentes/BloqueError.vue'
@@ -90,7 +95,8 @@ onMounted(() => void cargar())
         </p>
         <p class="meta">
           Lectura: <span class="chip">{{ ETIQUETA_METODO[factura.extraction_method] }}</span>
-          · Confianza {{ Math.round(factura.confidence * 100) }} %
+          · Confianza {{ porcentaje(factura.confidence, 0) }} ·
+          {{ ETIQUETA_CONFIANZA[tonoConfianza(factura.confidence)] }}
           <BotonBase variante="enlace" tamanyo="sm" :href="urlPdf">Ver PDF original</BotonBase>
         </p>
 
@@ -112,7 +118,7 @@ onMounted(() => void cargar())
 
       <section class="tarjeta" aria-labelledby="titulo-lineas">
         <h2 id="titulo-lineas" class="titulo-bloque">Líneas</h2>
-        <div class="envoltorio-tabla">
+        <div class="envoltorio-tabla" tabindex="0">
           <table class="tabla">
             <caption class="oculto">Líneas de la factura</caption>
             <thead>
@@ -128,9 +134,9 @@ onMounted(() => void cargar())
             <tbody>
               <tr v-for="l in factura.lines" :key="l.id" :class="{ excluida: l.is_excluded }">
                 <th scope="row" class="descripcion">{{ l.description }}</th>
-                <td class="num-col num">{{ l.quantity ?? '—' }}</td>
+                <td class="num-col num">{{ cantidad(l.quantity) }}</td>
                 <td>{{ l.unit ?? '—' }}</td>
-                <td class="num-col num">{{ l.unit_price ? euros(l.unit_price) : '—' }}</td>
+                <td class="num-col num">{{ precioUnitario(l.unit_price) }}</td>
                 <td class="num-col num">{{ euros(l.total) }}</td>
                 <td>
                   <EtiquetaCategoria

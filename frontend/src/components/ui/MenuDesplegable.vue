@@ -39,8 +39,6 @@ const raiz = ref<HTMLElement | null>(null)
 const menu = ref<HTMLElement | null>(null)
 const disparador = ref<HTMLElement | null>(null)
 
-const utilizables = computed(() => props.items.filter((i) => !i.deshabilitada))
-
 /** Atributos ARIA que tiene que llevar el disparador que ponga quien lo use. */
 const atributos = computed(() => ({
   'aria-haspopup': 'menu' as const,
@@ -51,8 +49,7 @@ const atributos = computed(() => ({
 function abrir(): void {
   abierto.value = true
   emit('update:abierto', true)
-  indiceActivo.value = 0
-  void enfocarActivo()
+  void enfocarIndice(0)
 }
 
 function cerrar(devolverFoco = true): void {
@@ -67,16 +64,42 @@ function alternar(): void {
   abierto.value ? cerrar() : abrir()
 }
 
-async function enfocarActivo(): Promise<void> {
+/**
+ * Lo que el teclado puede recorrer dentro del menú.
+ *
+ * Se lee del DOM y no de `items` por dos razones: los elementos deshabilitados
+ * quedan fuera (antes se indexaba la lista filtrada contra el DOM sin filtrar, y
+ * las flechas caían en el sitio equivocado), y los slots de cabecera y pie
+ * entran en el recorrido —ahí es donde §5.16 coloca el conmutador de tema y el
+ * botón de renovar sesión, que sin esto no se alcanzaban con el teclado—.
+ */
+function focusables(): HTMLElement[] {
+  if (!menu.value) return []
+  return Array.from(
+    menu.value.querySelectorAll<HTMLElement>(
+      '[role="menuitem"]:not([aria-disabled="true"]),' +
+        'a[href],' +
+        'input:not([disabled]),' +
+        'select:not([disabled]),' +
+        'button:not([disabled]):not([role="menuitem"])',
+    ),
+  )
+}
+
+async function enfocarIndice(indice: number): Promise<void> {
   await nextTick()
-  menu.value?.querySelectorAll<HTMLElement>('[role="menuitem"]')[indiceActivo.value]?.focus()
+  const lista = focusables()
+  if (lista.length === 0) return
+  const i = ((indice % lista.length) + lista.length) % lista.length
+  indiceActivo.value = i
+  lista[i]?.focus()
 }
 
 function mover(delta: number): void {
-  const total = utilizables.value.length
-  if (total === 0) return
-  indiceActivo.value = (indiceActivo.value + delta + total) % total
-  void enfocarActivo()
+  const lista = focusables()
+  if (lista.length === 0) return
+  const actual = lista.indexOf(document.activeElement as HTMLElement)
+  void enfocarIndice((actual === -1 ? 0 : actual) + delta)
 }
 
 function elegir(item: ItemMenu): void {
@@ -97,13 +120,11 @@ function alTeclear(evento: KeyboardEvent): void {
       break
     case 'Home':
       evento.preventDefault()
-      indiceActivo.value = 0
-      void enfocarActivo()
+      void enfocarIndice(0)
       break
     case 'End':
       evento.preventDefault()
-      indiceActivo.value = utilizables.value.length - 1
-      void enfocarActivo()
+      void enfocarIndice(focusables().length - 1)
       break
     case 'Escape':
       evento.preventDefault()
@@ -195,7 +216,8 @@ defineExpose({ abrir, cerrar, alternar })
   align-items: center;
   gap: var(--sp-2);
   width: 100%;
-  min-height: 36px;
+  /* Objetivo táctil de 44 px (§10); antes eran 36. */
+  min-height: 44px;
   padding-inline: var(--sp-2);
   border: 0;
   border-radius: var(--r-sm);

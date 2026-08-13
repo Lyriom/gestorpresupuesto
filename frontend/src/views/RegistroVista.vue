@@ -43,6 +43,15 @@ const puedeEnviar = computed(
     acepta.value,
 )
 
+/**
+ * Error de un campo: primero lo que dijo el servidor (422 con `detalles[]`) y
+ * después la validación local. El servidor manda, que es quien conoce, por
+ * ejemplo, que ese correo ya está cogido.
+ */
+function errorDe(campo: string, local: string | null): string | undefined {
+  return sesion.erroresCampo[campo] ?? local ?? undefined
+}
+
 function validar(): boolean {
   errorNombre.value = nombre.value.trim() ? null : 'Este campo es obligatorio.'
   errorCorreo.value = correo.value.includes('@')
@@ -100,7 +109,7 @@ function cambiarPestanya(valor: string | number): void {
         etiqueta="Nombre"
         placeholder="Cómo te llamamos"
         autocompletar="name"
-        :error="errorNombre ?? undefined"
+        :error="errorDe('name', errorNombre)"
         :deshabilitado="sesion.enviando"
         requerido
       />
@@ -110,7 +119,7 @@ function cambiarPestanya(valor: string | number): void {
         tipo="email"
         placeholder="tu@correo.com"
         autocompletar="username"
-        :error="errorCorreo ?? undefined"
+        :error="errorDe('email', errorCorreo)"
         :deshabilitado="sesion.enviando"
         requerido
       />
@@ -120,7 +129,7 @@ function cambiarPestanya(valor: string | number): void {
         tipo="password"
         autocompletar="new-password"
         :ayuda="`Mínimo ${LONGITUD_MINIMA} caracteres, con letras y números`"
-        :error="errorContrasenya ?? undefined"
+        :error="errorDe('password', errorContrasenya)"
         :deshabilitado="sesion.enviando"
         requerido
       />

@@ -30,11 +30,20 @@ const fmtCompacto = new Intl.NumberFormat(LOCALE, {
   maximumFractionDigits: 1,
 })
 
-const fmtPorcentaje = new Intl.NumberFormat(LOCALE, {
-  style: 'percent',
-  minimumFractionDigits: 1,
-  maximumFractionDigits: 1,
-})
+const cachePorcentaje = new Map<number, Intl.NumberFormat>()
+
+function formateadorPorcentaje(decimales: number): Intl.NumberFormat {
+  let f = cachePorcentaje.get(decimales)
+  if (!f) {
+    f = new Intl.NumberFormat(LOCALE, {
+      style: 'percent',
+      minimumFractionDigits: decimales,
+      maximumFractionDigits: decimales,
+    })
+    cachePorcentaje.set(decimales, f)
+  }
+  return f
+}
 
 const fmtFechaCorta = new Intl.DateTimeFormat(LOCALE, {
   day: 'numeric',
@@ -80,12 +89,66 @@ export function eurosCompactos(
   return `${fmtCompacto.format(aNumero(valor))} ${simbolo}`
 }
 
-/** Recibe una proporción (0,153) y devuelve `15,3 %`. */
-export function porcentaje(proporcion: number | null | undefined): string {
+/**
+ * Precio unitario: `2,459 €/kg` (§8.1).
+ *
+ * Existe aparte de `euros()` porque un precio por unidad conserva hasta cuatro
+ * decimales significativos (así llega en el contrato: `"2.1900"`), mientras que
+ * un importe siempre lleva exactamente dos.
+ */
+const fmtPrecioUnitario = new Intl.NumberFormat(LOCALE, {
+  style: 'currency',
+  currency: MONEDA_POR_DEFECTO,
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 4,
+})
+
+export function precioUnitario(
+  valor: string | number | null | undefined,
+  unidad?: string | null,
+): string {
+  if (valor === null || valor === undefined || valor === '') return '—'
+  const texto = fmtPrecioUnitario.format(aNumero(valor))
+  return unidad ? `${texto}/${unidad}` : texto
+}
+
+const fmtCantidad = new Intl.NumberFormat(LOCALE, {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 3,
+})
+
+/**
+ * Cantidad con su unidad: `1,24 kg`, `750 ml`, `2 uds.` (§8.4).
+ *
+ * El contrato manda las cantidades como cadena decimal con punto, así que
+ * pintarlas tal cual («1.240») se lee en español como mil doscientos cuarenta.
+ */
+export function cantidad(
+  valor: string | number | null | undefined,
+  unidad?: string | null,
+): string {
+  if (valor === null || valor === undefined || valor === '') return '—'
+  const n = aNumero(valor)
+  const texto = fmtCantidad.format(n)
+  if (!unidad) return n === 1 ? `${texto} ud.` : `${texto} uds.`
+  return `${texto} ${unidad}`
+}
+
+/**
+ * Recibe una proporción (0,153) y devuelve `15,3 %`.
+ *
+ * Un decimal por defecto (§8.3). Se admite `decimales = 0` para los indicadores
+ * gruesos donde los wireframes piden entero —la confianza de una línea de
+ * factura, el umbral de aviso—, para que ni esos se compongan a mano.
+ */
+export function porcentaje(
+  proporcion: number | null | undefined,
+  decimales = 1,
+): string {
   if (proporcion === null || proporcion === undefined || !Number.isFinite(proporcion)) {
     return '—'
   }
-  return fmtPorcentaje.format(proporcion)
+  return formateadorPorcentaje(decimales).format(proporcion)
 }
 
 /**
@@ -104,7 +167,7 @@ export function variacion(
   const p = (b - a) / a
   const sentido = Math.abs(p) < 0.0005 ? 'igual' : p > 0 ? 'sube' : 'baja'
   const signo = p > 0 ? '+' : ''
-  return { texto: `${signo}${fmtPorcentaje.format(p)}`, proporcion: p, sentido }
+  return { texto: `${signo}${formateadorPorcentaje(1).format(p)}`, proporcion: p, sentido }
 }
 
 function aFecha(valor: string | Date): Date {

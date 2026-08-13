@@ -159,7 +159,9 @@ watch(esMovil, (movil) => {
 <template>
   <div class="app" :class="{ 'con-barra-inferior': esMovil }">
     <a href="#contenido" class="salto">Saltar al contenido principal</a>
-    <a href="#navegacion" class="salto">Saltar a la navegación</a>
+    <!-- Solo cuando la barra lateral existe: por debajo de 1024 px vive dentro
+         del cajón y el enlace no llevaba a ninguna parte. -->
+    <a v-if="lateralVisible" href="#navegacion" class="salto">Saltar a la navegación</a>
 
     <div v-if="cajonMovil && !lg" class="scrim-nav" @click="cajonMovil = false" />
 
@@ -172,11 +174,11 @@ watch(esMovil, (movil) => {
     >
       <div class="marca">
         <span class="logo" aria-hidden="true">€</span>
-        <span v-if="!colapsada" class="nombre-app">Presupuesto</span>
+        <span v-if="!colapsada" class="nombre-app">Gestor de presupuesto</span>
         <button
           v-if="!lg"
           type="button"
-          class="icono-boton"
+          class="icono-boton toque-44"
           aria-label="Cerrar la navegación"
           @click="cajonMovil = false"
         >
@@ -185,7 +187,7 @@ watch(esMovil, (movil) => {
         <button
           v-else
           type="button"
-          class="icono-boton"
+          class="icono-boton toque-44"
           :aria-label="colapsada ? 'Desplegar la navegación' : 'Plegar la navegación'"
           @click="colapsadaManual = !colapsadaManual"
         >
@@ -195,11 +197,11 @@ watch(esMovil, (movil) => {
 
       <!-- El selector de mes va arriba porque es el ámbito de casi todo. -->
       <div class="periodo" :class="{ compacto: colapsada }">
-        <button type="button" aria-label="Mes anterior" @click="moverPeriodo(-1)">
+        <button type="button" class="toque-44" aria-label="Mes anterior" @click="moverPeriodo(-1)">
           <ChevronLeft :size="16" aria-hidden="true" />
         </button>
         <span v-if="!colapsada" class="etiqueta-periodo">{{ etiquetaPeriodo(periodo) }}</span>
-        <button type="button" aria-label="Mes siguiente" @click="moverPeriodo(1)">
+        <button type="button" class="toque-44" aria-label="Mes siguiente" @click="moverPeriodo(1)">
           <ChevronRight :size="16" aria-hidden="true" />
         </button>
       </div>
@@ -316,7 +318,7 @@ watch(esMovil, (movil) => {
       <header v-if="!lg" class="cabecera-movil">
         <button
           type="button"
-          class="icono-boton"
+          class="icono-boton toque-44"
           aria-label="Abrir la navegación"
           :aria-expanded="cajonMovil"
           @click="cajonMovil = true"
@@ -326,7 +328,7 @@ watch(esMovil, (movil) => {
         <span class="titulo-movil">{{ etiquetaPeriodo(periodo) }}</span>
         <button
           type="button"
-          class="icono-boton"
+          class="icono-boton toque-44"
           :aria-label="tema === 'dark' ? 'Usar el tema claro' : 'Usar el tema oscuro'"
           @click="establecer(tema === 'dark' ? 'light' : 'dark')"
         >

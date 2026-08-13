@@ -138,7 +138,7 @@ const descripcion = computed(() => {
       </p>
       <button v-if="sinAsignacion" type="button" class="asignar" @click="emit('asignar', props.asignacion)">
         <CirclePlus :size="14" aria-hidden="true" />
-        Asignar presupuesto
+        Asignar
       </button>
     </div>
   </div>

@@ -74,7 +74,7 @@ function cambiarPestanya(valor: string | number): void {
         tipo="email"
         placeholder="tu@correo.com"
         autocompletar="username"
-        :error="errorCorreo ?? undefined"
+        :error="sesion.erroresCampo.email ?? errorCorreo ?? undefined"
         :deshabilitado="sesion.enviando"
         requerido
       />
@@ -83,6 +83,7 @@ function cambiarPestanya(valor: string | number): void {
         etiqueta="Contraseña"
         tipo="password"
         autocompletar="current-password"
+        :error="sesion.erroresCampo.password"
         :deshabilitado="sesion.enviando"
         requerido
         @enter="enviar"

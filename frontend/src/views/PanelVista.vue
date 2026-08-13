@@ -19,7 +19,7 @@ import BotonBase from '@/components/ui/BotonBase.vue'
 import EsqueletoCarga from '@/components/ui/EsqueletoCarga.vue'
 import EstadoVacio from '@/components/ui/EstadoVacio.vue'
 import EtiquetaCategoria from '@/components/ui/EtiquetaCategoria.vue'
-import { euros, fechaCorta } from '@/lib/formato'
+import { etiquetaPeriodo, euros, fechaCorta, porcentaje } from '@/lib/formato'
 import { accionDe, useAlertas } from '@/stores/alertas'
 import { mensajeDeError } from '@/stores/comun'
 import { ranuraDeCategoria } from '@/stores/categorias'
@@ -110,7 +110,7 @@ watch(
     <!-- Presupuesto del mes -->
     <BloqueError
       v-if="presupuesto.error && !presupuesto.mes"
-      :titulo="`No se ha podido cargar el presupuesto de ${presupuesto.periodo}`"
+      :titulo="`No se ha podido cargar el presupuesto de ${etiquetaPeriodo(presupuesto.periodo)}`"
       :nivel="2"
       @reintentar="presupuesto.cargar()"
     />
@@ -126,9 +126,19 @@ watch(
     />
 
     <!-- Avisos ya redactados por el backend -->
-    <section v-if="alertas.abiertas.length > 0" class="bloque" aria-labelledby="titulo-avisos">
+    <section
+      v-if="alertas.cargando || alertas.abiertas.length > 0"
+      class="bloque"
+      aria-labelledby="titulo-avisos"
+    >
       <h2 id="titulo-avisos" class="titulo-bloque">Avisos</h2>
-      <ul class="avisos">
+
+      <!-- §2.3 pide 3 líneas de esqueleto aquí mientras cargan los avisos. -->
+      <div v-if="alertas.cargando" class="tarjeta caja">
+        <EsqueletoCarga variante="texto" :lineas="3" anuncio="Cargando los avisos" />
+      </div>
+
+      <ul v-else class="avisos">
         <li
           v-for="a in alertas.abiertas"
           :key="a.id"
@@ -180,13 +190,20 @@ watch(
       <div class="cabecera-bloque">
         <h2 id="titulo-tematicas" class="titulo-bloque">Temáticas</h2>
         <BotonBase variante="enlace" tamanyo="sm" @click="mostrarComoTabla = !mostrarComoTabla">
-          {{ mostrarComoTabla ? 'Ver como lista' : 'Ver como tabla' }}
+          {{ mostrarComoTabla ? 'Ocultar la tabla' : 'Ver como tabla' }}
         </BotonBase>
       </div>
 
       <div v-if="presupuesto.cargando" class="tarjeta caja">
         <EsqueletoCarga variante="barra" :lineas="6" anuncio="Cargando las temáticas del mes" />
       </div>
+
+      <!-- Sin esto, un fallo de carga se confundía con «no hay temáticas». -->
+      <BloqueError
+        v-else-if="presupuesto.error"
+        titulo="No se han podido cargar las temáticas"
+        @reintentar="presupuesto.cargar()"
+      />
 
       <div v-else-if="asignacionesConGasto.length === 0" class="tarjeta caja">
         <EstadoVacio
@@ -226,7 +243,7 @@ watch(
               <td class="num-col num">{{ euros(a.spent) }}</td>
               <td class="num-col num">{{ euros(a.allocated) }}</td>
               <td class="num-col num">{{ euros(a.available) }}</td>
-              <td class="num-col num">{{ Math.round((a.spent_pct ?? 0) * 100) }} %</td>
+              <td class="num-col num">{{ porcentaje(a.spent_pct) }}</td>
             </tr>
           </tbody>
         </table>

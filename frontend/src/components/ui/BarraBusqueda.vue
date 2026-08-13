@@ -54,8 +54,8 @@ const rotuloAmbito = computed(() => {
   const t = props.modelValue.trim()
   if (!t || t.length < props.minimoCaracteres) return null
   return pareceImporte.value
-    ? `Buscando “${t}” en conceptos e importes`
-    : `Buscando “${t}” en conceptos y comercios`
+    ? `Buscando «${t}» en conceptos e importes`
+    : `Buscando «${t}» en conceptos y comercios`
 })
 
 function alEscribir(valor: string): void {
@@ -108,7 +108,7 @@ defineExpose({ enfocar: () => campo.value?.focus() })
         <button
           v-else-if="modelValue"
           type="button"
-          class="limpiar"
+          class="limpiar toque-44"
           aria-label="Limpiar la búsqueda"
           @click="limpiar"
         >
@@ -184,6 +184,14 @@ defineExpose({ enfocar: () => campo.value?.focus() })
 .caja:focus-within {
   border-color: var(--c-accent);
   box-shadow: var(--glow-accent);
+}
+/* Anillo de foco real (§5, §10): 2 px de acento con 2 px de separación. El
+   input hace `outline: none` y el brillo de --glow-accent es de 1 px, por
+   debajo del 3:1 exigido al indicador. Se ancla al input para que enfocar un
+   botón de dentro de la caja no ilumine el campo entero. */
+.caja:has(input:focus-visible) {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
 }
 input {
   flex: 1 1 auto;

@@ -19,7 +19,7 @@ import BotonBase from '@/components/ui/BotonBase.vue'
 import EsqueletoCarga from '@/components/ui/EsqueletoCarga.vue'
 import EstadoVacio from '@/components/ui/EstadoVacio.vue'
 import { ETIQUETA_TENDENCIA } from '@/api/productos'
-import { aNumero, euros, fechaCorta } from '@/lib/formato'
+import { aNumero, cantidad, euros, fechaCorta, porcentaje, precioUnitario } from '@/lib/formato'
 import { useProductos } from '@/stores/productos'
 import BloqueError from './componentes/BloqueError.vue'
 
@@ -49,8 +49,31 @@ const ahorro = computed(() => {
   if (!barato || !actual) return null
   const diferencia = aNumero(actual) - aNumero(barato.last_unit_price)
   if (diferencia <= 0) return null
-  const pct = (diferencia / aNumero(actual)) * 100
-  return { diferencia, pct, comercio: barato.payee?.name ?? 'otro comercio' }
+  const proporcion = diferencia / aNumero(actual)
+  return { diferencia, proporcion, comercio: barato.payee?.name ?? 'otro comercio' }
+})
+
+/**
+ * Indicador de variación completo (§8.3): flecha · porcentaje · importe
+ * absoluto · periodo, en ese orden. La polaridad es `up-is-bad`: en el precio de
+ * un producto subir es malo, y por eso la subida va en `--c-negative`.
+ *
+ * El porcentaje lo da el backend; la diferencia en euros y la fecha de partida
+ * salen de las dos últimas observaciones ya cargadas, sin pedir nada más.
+ */
+const variacionPrecio = computed(() => {
+  const pct = stats.value?.change_pct
+  if (pct === null || pct === undefined) return null
+  const serieP = productos.precios
+  const anterior = serieP.length >= 2 ? serieP[serieP.length - 2] : null
+  const ultimo = serieP.length >= 1 ? serieP[serieP.length - 1] : null
+  return {
+    pct,
+    sube: pct > 0,
+    diferencia:
+      anterior && ultimo ? aNumero(ultimo.unit_price) - aNumero(anterior.unit_price) : null,
+    desde: anterior?.observed_at ?? null,
+  }
 })
 
 onMounted(() => void productos.cargarFicha(id.value))
@@ -89,29 +112,34 @@ onBeforeUnmount(() => productos.limpiarFicha())
           <div class="cifra">
             <p class="rotulo">Precio actual</p>
             <p class="valor num">
-              {{ stats?.last_unit_price ? euros(stats.last_unit_price) : '—' }}
+              {{ precioUnitario(stats?.last_unit_price) }}
               <span v-if="unidad" class="unidad">/{{ unidad }}</span>
             </p>
           </div>
 
           <div class="cifra">
             <p class="rotulo">Comparado con el anterior</p>
-            <p
-              v-if="stats?.change_pct !== null && stats?.change_pct !== undefined"
-              class="valor num"
-              :class="stats.change_pct > 0 ? 'sube' : 'baja'"
-            >
-              <ArrowUpRight v-if="stats.change_pct > 0" :size="18" aria-hidden="true" />
+            <p v-if="variacionPrecio" class="valor num" :class="variacionPrecio.sube ? 'sube' : 'baja'">
+              <ArrowUpRight v-if="variacionPrecio.sube" :size="18" aria-hidden="true" />
               <ArrowDownRight v-else :size="18" aria-hidden="true" />
-              {{ stats.change_pct > 0 ? '+' : '' }}{{ stats.change_pct.toFixed(1) }} %
+              <!-- El sentido no puede vivir solo en el color y la flecha (§2.3). -->
+              <span class="oculto">{{ variacionPrecio.sube ? 'Ha subido' : 'Ha bajado' }}</span>
+              {{ variacionPrecio.sube ? '+' : '' }}{{ porcentaje(variacionPrecio.pct / 100) }}
+              <span v-if="variacionPrecio.diferencia !== null" class="unidad">
+                {{ euros(variacionPrecio.diferencia, { signoSiempre: true }) }}
+              </span>
+              <span v-if="variacionPrecio.desde" class="unidad">
+                desde {{ fechaCorta(variacionPrecio.desde) }}
+              </span>
             </p>
             <p v-else class="valor tenue">Sin histórico suficiente</p>
           </div>
         </div>
 
         <p v-if="stats" class="linea-stats num">
-          Mínimo {{ euros(stats.min_unit_price) }} · Máximo {{ euros(stats.max_unit_price) }} ·
-          Medio {{ euros(stats.average_unit_price) }} · Tendencia
+          Mínimo {{ precioUnitario(stats.min_unit_price, unidad) }} · Máximo
+          {{ precioUnitario(stats.max_unit_price, unidad) }} · Medio
+          {{ precioUnitario(stats.average_unit_price, unidad) }} · Tendencia
           <span class="chip">{{ ETIQUETA_TENDENCIA[stats.trend] }}</span>
         </p>
       </header>
@@ -162,13 +190,13 @@ onBeforeUnmount(() => productos.limpiarFicha())
 
         <p v-if="ahorro" class="tarjeta caja ahorro num">
           Ahorras {{ euros(ahorro.diferencia) }}<template v-if="unidad">/{{ unidad }}</template>
-          comprando en {{ ahorro.comercio }} (un {{ ahorro.pct.toFixed(1) }} % menos).
+          comprando en {{ ahorro.comercio }} (un {{ porcentaje(ahorro.proporcion) }} menos).
         </p>
 
         <!-- Historial de compras: la tabla gemela obligatoria del gráfico -->
         <section class="tarjeta" aria-labelledby="titulo-historial">
           <h2 id="titulo-historial" class="titulo-bloque">Historial de compras</h2>
-          <div class="envoltorio-tabla">
+          <div class="envoltorio-tabla" tabindex="0">
             <table class="tabla">
               <caption class="oculto">Compras registradas de {{ producto.name }}</caption>
               <thead>
@@ -185,8 +213,8 @@ onBeforeUnmount(() => productos.limpiarFicha())
                 <tr v-for="p in [...productos.precios].reverse()" :key="p.id">
                   <th scope="row">{{ fechaCorta(p.observed_at) }}</th>
                   <td>{{ p.payee?.name ?? '—' }}</td>
-                  <td class="num-col num">{{ p.quantity ?? '—' }} {{ p.unit ?? '' }}</td>
-                  <td class="num-col num">{{ euros(p.unit_price) }}</td>
+                  <td class="num-col num">{{ cantidad(p.quantity, p.unit) }}</td>
+                  <td class="num-col num">{{ precioUnitario(p.unit_price) }}</td>
                   <td class="num-col num">{{ p.total ? euros(p.total) : '—' }}</td>
                   <td>
                     <BotonBase

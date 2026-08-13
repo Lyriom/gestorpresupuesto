@@ -2,6 +2,8 @@
 import { nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { X } from 'lucide-vue-next'
 
+import { bloquearFondo, liberarFondo } from '@/lib/capaModal'
+
 const props = withDefaults(
   defineProps<{
     abierto: boolean
@@ -77,18 +79,19 @@ function medirCortes(): void {
   corteAbajo.value = el.scrollTop + el.clientHeight < el.scrollHeight - 1
 }
 
-function bloquearFondo(): void {
-  // Se compensa el ancho de la barra para que no haya salto de maquetación.
-  const barra = window.innerWidth - document.documentElement.clientWidth
-  document.body.style.overflow = 'hidden'
-  if (barra > 0) document.body.style.paddingRight = `${barra}px`
-  document.getElementById('app')?.setAttribute('inert', '')
+/** Esta instancia tiene el fondo bloqueado; evita liberar una capa ajena. */
+let bloqueado = false
+
+function bloquear(): void {
+  if (bloqueado) return
+  bloqueado = true
+  bloquearFondo()
 }
 
-function liberarFondo(): void {
-  document.body.style.overflow = ''
-  document.body.style.paddingRight = ''
-  document.getElementById('app')?.removeAttribute('inert')
+function liberar(): void {
+  if (!bloqueado) return
+  bloqueado = false
+  liberarFondo()
 }
 
 watch(
@@ -96,24 +99,35 @@ watch(
   async (abierto) => {
     if (abierto) {
       devolverFocoA = document.activeElement as HTMLElement | null
-      bloquearFondo()
+      bloquear()
       await nextTick()
       // Al abrir, el foco va al primer campo; si no hay, al contenedor. Nunca
-      // a una acción destructiva.
+      // a una acción destructiva. Se excluyen los deshabilitados y de solo
+      // lectura, y se admite el disparador de `SelectorBase`, que es un
+      // `button[role="combobox"]` y antes se saltaba.
       const campo = panel.value?.querySelector<HTMLElement>(
-        'input:not([type="hidden"]), textarea, select',
+        'input:not([type="hidden"]):not([disabled]):not([readonly]),' +
+          'textarea:not([disabled]):not([readonly]),' +
+          'select:not([disabled]),' +
+          '[role="combobox"]:not([disabled])',
       )
       ;(campo ?? panel.value)?.focus()
       medirCortes()
     } else {
-      liberarFondo()
+      liberar()
       devolverFocoA?.focus()
       devolverFocoA = null
     }
   },
 )
 
-onBeforeUnmount(liberarFondo)
+// Si el padre destruye el modal con un `v-if`, hay que soltar el fondo y
+// devolver el foco: si no, se queda en `<body>`.
+onBeforeUnmount(() => {
+  liberar()
+  devolverFocoA?.focus()
+  devolverFocoA = null
+})
 </script>
 
 <template>
@@ -140,7 +154,7 @@ onBeforeUnmount(liberarFondo)
             <button
               v-if="!ocultarCierre"
               type="button"
-              class="cerrar"
+              class="cerrar toque-44"
               aria-label="Cerrar"
               :disabled="guardando"
               @click="solicitarCierre()"

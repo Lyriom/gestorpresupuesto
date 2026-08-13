@@ -634,7 +634,7 @@ const hayCabecera = computed(() => props.mostrarCabecera && !props.anidada)
         <!-- H. Sin ingresos declarados: carril vacío con el único borde
              discontinuo permitido en todo el sistema. -->
         <div v-if="sinIngresos" class="vacio">
-          <div class="carril-vacio">Aún no has puesto los ingresos</div>
+          <div class="carril-vacio">Aún no has puesto los ingresos.</div>
           <p class="texto-vacio">Sin ingresos no hay barra que repartir. Es un minuto.</p>
           <button type="button" class="boton-primario" @click="emit('ponerIngresos')">
             Poner ingresos de {{ nombreMes.split(' ')[0].toLowerCase() }}
