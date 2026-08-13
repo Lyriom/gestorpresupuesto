@@ -1,0 +1,48 @@
+{
+  "name": "Gestor de Presupuesto",
+  "short_name": "Presupuesto",
+  "description": "Reparte los ingresos del mes por temáticas, controla los gastos y sigue la evolución de los precios de tus facturas.",
+  "lang": "es-ES",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0d1117",
+  "theme_color": "#0d1117",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    {
+      "src": "/icono-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icono-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icono-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Apuntar un gasto",
+      "short_name": "Gasto",
+      "url": "/movimientos?nuevo=1",
+      "description": "Abre directamente el alta rápida de gasto"
+    },
+    {
+      "name": "Subir una factura",
+      "short_name": "Factura",
+      "url": "/facturas?subir=1",
+      "description": "Abre la subida de factura en PDF"
+    }
+  ]
+}

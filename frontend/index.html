@@ -8,6 +8,10 @@
     <!-- Valor del primer pintado; useTema.ts lo resuelve luego desde --c-app-bg. -->
     <meta name="theme-color" content="#0e1116" />
     <meta name="description" content="Gestor de presupuesto personal: reparte los ingresos del mes por temáticas, controla los gastos y sigue la evolución de los precios de tus facturas." />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Presupuesto" />
     <title>Gestor de Presupuesto</title>
     <script>
       // Aplica el tema guardado antes de la primera pintura para que no haya
@@ -22,6 +26,19 @@
           /* localStorage bloqueado: se queda el tema oscuro por defecto */
         }
       })()
+    </script>
+    <script>
+      // Registro del service worker, que hace la aplicación instalable en el
+      // móvil. Se hace aquí y no en main.ts para no depender del arranque de Vue:
+      // si el paquete falla, al menos la app sigue instalada y abre sin conexión.
+      // Solo en producción: en desarrollo una caché de más despista más que ayuda.
+      if ('serviceWorker' in navigator && location.hostname !== 'localhost') {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(() => {
+            /* sin service worker la aplicación funciona igual, solo no se instala */
+          })
+        })
+      }
     </script>
   </head>
   <body>
