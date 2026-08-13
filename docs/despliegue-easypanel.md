@@ -126,16 +126,29 @@ pestaña de despliegue). Las migraciones se aplican solas en cada arranque.
 ## Copias de seguridad
 
 El servicio de Postgres de EasyPanel tiene backups programados en su propia
-pestaña; actívalos. Para una copia manual:
+pestaña; actívalos. Pero **un backup de la base de datos sin los PDF deja las
+facturas sin documento original**, así que el repositorio incluye un script que
+se lleva las dos cosas o falla:
 
 ```bash
-# Desde la consola del servicio db
-pg_dump -U presupuesto presupuesto | gzip > /tmp/presupuesto-$(date +%F).sql.gz
+scripts/copia-seguridad.sh /ruta/donde/guardar     # base de datos + facturas
+scripts/restaurar-copia.sh copias/presupuesto-....tar
 ```
 
-Los ficheros de las facturas viven en el volumen `/data`, así que respáldalos
-también: un backup de la base de datos sin los PDF deja las facturas sin
-documento original.
+Genera un `.tar` con el volcado de PostgreSQL en formato personalizado, las
+facturas comprimidas y un manifiesto que dice qué revisión de esquema tenía la
+copia. Conserva las 14 últimas (ajustable con `RETENCION`). Si no encuentra
+`pg_dump` en el sistema, usa el del contenedor de la base de datos.
+
+La restauración pide confirmación escrita antes de tocar nada, porque restaurar
+por error una copia de hace dos semanas se parece mucho a perder dos semanas de
+datos.
+
+Para programarlo en el servidor, un cron diario:
+
+```
+0 4 * * * cd /ruta/al/proyecto && RETENCION=30 scripts/copia-seguridad.sh /copias >> /var/log/presupuesto-copias.log 2>&1
+```
 
 Además, la propia aplicación permite exportar todos tus datos en JSON desde
 **Ajustes → Datos → Exportar**, que sirve como copia independiente del motor.
