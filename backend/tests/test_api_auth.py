@@ -396,12 +396,18 @@ async def test_refresh_sin_cookie_devuelve_sesion_expirada(cliente: AsyncClient)
 async def test_logout_borra_las_cookies_y_revoca_el_refresco(
     cliente: AsyncClient, sesion_bd: AsyncSession
 ) -> None:
-    await registrar(cliente)
+    correo = await registrar(cliente)
     respuesta = await cliente.post(f"{PREFIJO}/auth/logout", headers=cabeceras(cliente))
     assert respuesta.status_code == 204
     assert not cliente.cookies.get("access_token")
 
-    vivos = await sesion_bd.scalar(select(RefreshToken.id).where(RefreshToken.revoked_at.is_(None)))
+    # Acotado a este usuario: la comprobación global fallaba en cuanto otro test
+    # dejaba una sesión abierta en la misma base de datos.
+    vivos = await sesion_bd.scalar(
+        select(RefreshToken.id)
+        .join(User, User.id == RefreshToken.user_id)
+        .where(User.email == correo, RefreshToken.revoked_at.is_(None))
+    )
     assert vivos is None
 
 

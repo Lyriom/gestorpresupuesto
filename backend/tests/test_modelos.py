@@ -50,6 +50,15 @@ URL_ADMIN = os.environ.get(
 )
 URL_PRUEBAS = URL_ADMIN.rsplit("/", 1)[0] + f"/{BASE_PRUEBAS}"
 
+# Estas pruebas ejecutan DROP DATABASE. Si alguien apunta la variable de entorno
+# a la base real, se lleva por delante los datos del usuario: más vale abortar
+# aquí que descubrirlo después.
+if not BASE_PRUEBAS.endswith(("_test", "_test_api")):
+    raise RuntimeError(
+        f"TEST_DB_NAME='{BASE_PRUEBAS}' no parece una base de pruebas. "
+        "Tiene que acabar en '_test' o '_test_api': estas pruebas la borran y la recrean."
+    )
+
 MOTIVO_SIN_POSTGRES = (
     "Hace falta PostgreSQL en marcha: `docker compose up -d db` en la raíz del repositorio."
 )
