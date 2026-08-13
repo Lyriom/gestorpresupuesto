@@ -35,6 +35,21 @@ precios por producto y detectar subidas.
 Es un **monolito**: un único proceso de FastAPI sirve la API en `/api/v1` y los ficheros
 estáticos del frontend compilado. La base de datos es un servicio aparte.
 
+## Estado
+
+| | |
+| --- | --- |
+| Tablas en PostgreSQL | 39, con 206 índices y 160 restricciones de integridad |
+| Operaciones de API | 209 en 154 rutas |
+| Esquemas de validación | 263 |
+| Pantallas | 16 rutas, todas implementadas |
+| Pruebas | 663, en verde |
+
+La lógica de negocio (lectura de facturas, historial de precios, cálculo de la
+barra, recurrencias, reglas e importación de CSV) está escrita como funciones
+puras sin dependencias de la base de datos, y tiene su propia cobertura de
+pruebas.
+
 ## Estructura del repositorio
 
 ```
@@ -74,6 +89,30 @@ npm run dev
 
 El frontend de desarrollo corre en `http://localhost:5173` y redirige `/api` al backend
 en `http://localhost:8000`. La documentación interactiva de la API está en `/api/docs`.
+
+### Facturas de ejemplo
+
+Para probar la lectura de facturas y el historial de precios sin esperar meses a
+acumular facturas reales:
+
+```bash
+backend/.venv/bin/python scripts/generar_facturas_ejemplo.py ejemplos/facturas
+```
+
+Genera la misma cesta de la compra en tres meses con subidas desiguales (el
+aceite sube un 28 %), tres facturas de luz con el kWh subiendo un 16 %, y una
+factura escaneada sin capa de texto para comprobar el OCR.
+
+### Pruebas
+
+```bash
+cd backend
+./.venv/bin/python -m pytest tests -q      # necesita PostgreSQL levantado
+./.venv/bin/ruff check app tests
+cd ../frontend
+npx vue-tsc -b --force                     # con --noEmit no comprueba nada aquí
+npm run build
+```
 
 ## Despliegue
 
