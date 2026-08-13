@@ -1,0 +1,47 @@
+# Entorno de desarrollo local. En EasyPanel no se usa este fichero: allí se
+# crea un servicio de PostgreSQL y otro de App apuntando al Dockerfile.
+name: gestor-presupuesto
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: presupuesto
+      POSTGRES_PASSWORD: presupuesto
+      POSTGRES_DB: presupuesto
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U presupuesto -d presupuesto"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      SECRET_KEY: ${SECRET_KEY:-clave-solo-para-desarrollo-cambiala-en-produccion}
+      DATABASE_URL: postgresql+asyncpg://presupuesto:presupuesto@db:5432/presupuesto
+      CORS_ORIGINS: ""
+      COOKIE_SECURE: "false"
+    ports:
+      - "8000:8000"
+    volumes:
+      - uploads:/data
+    # Perfil opcional: `docker compose up -d db` levanta solo la base de datos
+    # para desarrollar el backend en local con recarga automática.
+    profiles: ["full"]
+
+volumes:
+  pgdata:
+  uploads:
