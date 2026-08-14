@@ -11,19 +11,21 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
+import pytest
+from sqlalchemy.exc import IntegrityError
+
 from app.models.categoria import Category
 from app.models.factura import Invoice, InvoiceLine
 from app.models.producto import Product, ProductPrice
 from app.models.transaccion import Transaction
-from tests.test_api_facturas import (  # noqa: F401 - fixtures compartidas
-    Entorno,
-    aplicacion,
-    cliente,
-    contar,
-    ejemplos,
-    entorno,
-    filas,
-)
+from tests import test_api_facturas as andamio
+from tests.test_api_facturas import Entorno, SesionPrueba, contar, filas
+
+# Las fixturas del andamio se reexportan para que pytest las resuelva por nombre.
+aplicacion = andamio.aplicacion
+cliente = andamio.cliente
+ejemplos = andamio.ejemplos
+entorno = andamio.entorno
 
 RUTA = "/api/v1/invoices/manual"
 
@@ -264,11 +266,6 @@ async def test_dos_compras_a_mano_dan_la_variacion_de_precio(cliente, entorno):
 async def test_la_base_de_datos_no_admite_una_factura_subida_sin_fichero(entorno):
     """La restricción cambió de «toda factura tiene fichero» a «lo tiene si vino
     de uno». La segunda mitad tiene que seguir siendo imposible."""
-    import pytest
-    from sqlalchemy.exc import IntegrityError
-
-    from tests.test_api_facturas import SesionPrueba
-
     async with SesionPrueba() as sesion:
         sesion.add(
             Invoice(
