@@ -18,7 +18,7 @@ import EsqueletoCarga from '@/components/ui/EsqueletoCarga.vue'
 import EstadoVacio from '@/components/ui/EstadoVacio.vue'
 import PestanyasBase from '@/components/ui/PestanyasBase.vue'
 import SelectorBase from '@/components/ui/SelectorBase.vue'
-import { aNumero, etiquetaPeriodo, euros, porcentaje, precioUnitario } from '@/lib/formato'
+import { aNumero, etiquetaPeriodo, dinero, porcentaje, precioUnitario } from '@/lib/formato'
 import { ranuraDeCategoria } from '@/stores/categorias'
 import { PESTANYAS_INFORME, RANGOS, useInformes, type PestanyaInforme } from '@/stores/informes'
 import BloqueError from './componentes/BloqueError.vue'
@@ -135,15 +135,15 @@ onMounted(() => {
         <div class="cifras tarjeta caja">
           <div>
             <p class="rotulo">Ingresos</p>
-            <p class="valor num">{{ euros(ingresos?.income_total) }}</p>
+            <p class="valor num">{{ dinero(ingresos?.income_total) }}</p>
           </div>
           <div>
             <p class="rotulo">Gastos</p>
-            <p class="valor num">{{ euros(ingresos?.expense_total) }}</p>
+            <p class="valor num">{{ dinero(ingresos?.expense_total) }}</p>
           </div>
           <div>
             <p class="rotulo">Ahorro</p>
-            <p class="valor num positivo">{{ euros(ingresos?.savings_total) }}</p>
+            <p class="valor num positivo">{{ dinero(ingresos?.savings_total) }}</p>
           </div>
           <div>
             <p class="rotulo">Tasa de ahorro</p>
@@ -194,14 +194,14 @@ onMounted(() => {
               <tbody>
                 <tr v-for="r in tematicas" :key="r.category.id">
                   <th scope="row">{{ r.category.name }}</th>
-                  <td class="num-col num">{{ euros(r.amount) }}</td>
+                  <td class="num-col num">{{ dinero(r.amount) }}</td>
                   <td class="num-col num">{{ porcentaje(r.share_pct / 100) }}</td>
-                  <td class="num-col num">{{ r.allocated ? euros(r.allocated) : '—' }}</td>
+                  <td class="num-col num">{{ r.allocated ? dinero(r.allocated) : '—' }}</td>
                   <td
                     class="num-col num"
                     :class="{ negativo: r.variance !== null && aNumero(r.variance) < 0 }"
                   >
-                    {{ r.variance ? euros(r.variance) : '—' }}
+                    {{ r.variance ? dinero(r.variance) : '—' }}
                   </td>
                   <td>
                     <BotonBase
@@ -260,7 +260,7 @@ onMounted(() => {
                     +{{ porcentaje(r.change_pct / 100) }}
                   </td>
                   <td class="num-col num">
-                    {{ r.estimated_monthly_impact ? euros(r.estimated_monthly_impact) : '—' }}
+                    {{ r.estimated_monthly_impact ? dinero(r.estimated_monthly_impact) : '—' }}
                   </td>
                 </tr>
               </tbody>
@@ -268,7 +268,7 @@ onMounted(() => {
           </div>
           <p class="pie-tabla num">
             Impacto total estimado
-            <strong>{{ euros(informes.subidas?.total_estimated_impact) }}</strong>
+            <strong>{{ dinero(informes.subidas?.total_estimated_impact) }}</strong>
           </p>
         </section>
       </template>
@@ -284,7 +284,7 @@ onMounted(() => {
         <p class="tarjeta caja num">
           Tasa de ahorro del periodo
           <strong>{{ porcentaje(informes.cashFlow?.savings_rate ?? 0) }}</strong>
-          · Neto {{ euros(informes.cashFlow?.net) }}
+          · Neto {{ dinero(informes.cashFlow?.net) }}
         </p>
       </template>
     </PestanyasBase>

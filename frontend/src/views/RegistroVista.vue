@@ -6,7 +6,7 @@
  * de letras y números. Se valida aquí también para no gastar una ida y vuelta,
  * pero la que manda sigue siendo la del servidor.
  */
-import { computed, ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import BotonBase from '@/components/ui/BotonBase.vue'
@@ -31,17 +31,12 @@ const errorNombre = ref<string | null>(null)
 const errorCorreo = ref<string | null>(null)
 const errorContrasenya = ref<string | null>(null)
 const errorRepetida = ref<string | null>(null)
+const errorAcepta = ref<string | null>(null)
+
+/** Ya se ha pulsado «Crear cuenta» alguna vez. */
+const intentado = ref(false)
 
 const pestanya = ref<string | number>('registro')
-
-const puedeEnviar = computed(
-  () =>
-    nombre.value.trim().length > 0 &&
-    correo.value.includes('@') &&
-    contrasenya.value.length >= LONGITUD_MINIMA &&
-    repetida.value === contrasenya.value &&
-    acepta.value,
-)
 
 /**
  * Error de un campo: primero lo que dijo el servidor (422 con `detalles[]`) y
@@ -65,12 +60,41 @@ function validar(): boolean {
       : `La contraseña debe tener al menos ${LONGITUD_MINIMA} caracteres.`
   errorRepetida.value =
     repetida.value === contrasenya.value ? null : 'Las contraseñas no coinciden.'
+  errorAcepta.value = acepta.value
+    ? null
+    : 'Hay que aceptar los términos para crear la cuenta.'
   return (
-    !errorNombre.value && !errorCorreo.value && !errorContrasenya.value && !errorRepetida.value
+    !errorNombre.value &&
+    !errorCorreo.value &&
+    !errorContrasenya.value &&
+    !errorRepetida.value &&
+    !errorAcepta.value
   )
 }
 
+/**
+ * Después del primer intento los mensajes se recalculan al escribir, para que
+ * desaparezcan en cuanto el campo queda bien. Antes del primer intento no, que
+ * regañar mientras se teclea el correo es de mala educación.
+ */
+watch([nombre, correo, contrasenya, repetida, acepta], () => {
+  if (intentado.value) validar()
+})
+
+/**
+ * El error del servidor tapa al local (`errorDe`), así que al tocar el campo
+ * hay que olvidarlo: si no, «ese correo ya está registrado» se queda pegado
+ * aunque se escriba otro.
+ */
+function olvidarDelServidor(campo: string): void {
+  if (sesion.erroresCampo[campo]) delete sesion.erroresCampo[campo]
+}
+watch(nombre, () => olvidarDelServidor('name'))
+watch(correo, () => olvidarDelServidor('email'))
+watch(contrasenya, () => olvidarDelServidor('password'))
+
 async function enviar(): Promise<void> {
+  intentado.value = true
   if (!validar()) return
   const dentro = await sesion.registrar({
     name: nombre.value.trim(),
@@ -143,16 +167,22 @@ function cambiarPestanya(valor: string | number): void {
         requerido
         @enter="enviar"
       />
-      <InterruptorBase
-        v-model="acepta"
-        etiqueta="Acepto los términos y la política de datos"
-      />
+      <div>
+        <InterruptorBase
+          v-model="acepta"
+          etiqueta="Acepto los términos y la política de datos"
+        />
+        <p v-if="errorAcepta" class="error-campo" role="alert">{{ errorAcepta }}</p>
+      </div>
+      <!-- El botón no se deshabilita por validación: si lo estuviera, no habría
+           forma de pulsarlo y, por tanto, tampoco de enterarse de qué falta. Se
+           envía, se valida y el mensaje sale en el campo que toca. -->
       <BotonBase
         variante="primaria"
         tipo="submit"
         ancho-completo
         :cargando="sesion.enviando"
-        :deshabilitado="!puedeEnviar || !sesion.registroAbierto"
+        :deshabilitado="!sesion.registroAbierto"
       >
         Crear cuenta
       </BotonBase>
@@ -170,6 +200,11 @@ function cambiarPestanya(valor: string | number): void {
   display: flex;
   flex-direction: column;
   gap: var(--sp-4);
+}
+.error-campo {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--t-caption);
+  color: var(--c-negative);
 }
 .banda-error,
 .banda-aviso {

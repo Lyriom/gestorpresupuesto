@@ -25,7 +25,7 @@ import ModalBase from '@/components/ui/ModalBase.vue'
 import SelectorBase from '@/components/ui/SelectorBase.vue'
 import TablaDatos, { type ColumnaTabla } from '@/components/ui/TablaDatos.vue'
 import { useAvisos } from '@/composables/useAvisos'
-import { euros, fechaCorta } from '@/lib/formato'
+import { dinero, fechaCorta } from '@/lib/formato'
 import { useCuentas } from '@/stores/cuentas'
 
 type Fila = Cuenta & Record<string, unknown>
@@ -110,15 +110,15 @@ onMounted(() => {
     <div v-if="cuentas.resumen" class="cifras tarjeta caja">
       <div>
         <p class="rotulo">Activos</p>
-        <p class="valor num">{{ euros(cuentas.resumen.assets) }}</p>
+        <p class="valor num">{{ dinero(cuentas.resumen.assets) }}</p>
       </div>
       <div>
         <p class="rotulo">Pasivos</p>
-        <p class="valor num">{{ euros(cuentas.resumen.liabilities) }}</p>
+        <p class="valor num">{{ dinero(cuentas.resumen.liabilities) }}</p>
       </div>
       <div>
         <p class="rotulo">Patrimonio neto</p>
-        <p class="valor num destacado">{{ euros(cuentas.resumen.net_worth) }}</p>
+        <p class="valor num destacado">{{ dinero(cuentas.resumen.net_worth) }}</p>
       </div>
     </div>
 
@@ -137,7 +137,7 @@ onMounted(() => {
 
       <template #celda-current_balance="{ fila }">
         <span :class="{ negativo: Number.parseFloat(fila.current_balance) < 0 }">
-          {{ euros(fila.current_balance) }}
+          {{ dinero(fila.current_balance) }}
         </span>
       </template>
 
@@ -148,13 +148,13 @@ onMounted(() => {
       <template #detalle="{ fila }">
         <dl class="detalle num">
           <dt>Saldo inicial</dt>
-          <dd>{{ euros(fila.initial_balance) }}</dd>
+          <dd>{{ dinero(fila.initial_balance) }}</dd>
           <dt>Movimientos</dt>
           <dd>{{ fila.transactions_count }}</dd>
           <dt>Conciliada hasta</dt>
           <dd>{{ fechaCorta(fila.reconciled_through) }}</dd>
           <dt v-if="fila.credit_limit">Límite de crédito</dt>
-          <dd v-if="fila.credit_limit">{{ euros(fila.credit_limit) }}</dd>
+          <dd v-if="fila.credit_limit">{{ dinero(fila.credit_limit) }}</dd>
           <dt>En el patrimonio neto</dt>
           <dd>{{ fila.is_excluded_from_net_worth ? 'Excluida' : 'Incluida' }}</dd>
         </dl>

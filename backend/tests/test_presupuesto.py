@@ -143,7 +143,7 @@ class TestBarraDePresupuesto:
         assert segmento.disponible == Decimal("-30.00")
         assert segmento.sobrepaso == Decimal("30.00")
         assert segmento.porcentaje_consumido == Decimal("130.00")
-        assert any("Te has pasado 30,00 € en Ocio" in aviso for aviso in barra.avisos)
+        assert any("Te has pasado $30,00 en Ocio" in aviso for aviso in barra.avisos)
 
     def test_avisa_de_varias_categorias_sobrepasadas(self):
         barra = calcular_barra(

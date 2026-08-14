@@ -25,7 +25,7 @@ import {
 import { useMedia } from '@/composables/useMedia'
 import { useTema, type PreferenciaTema } from '@/composables/useTema'
 import { useAtajos } from '@/composables/useAtajos'
-import { etiquetaPeriodo, desplazarPeriodo, periodoDe } from '@/lib/formato'
+import { etiquetaPeriodo, desplazarPeriodo, periodoDe , simboloDe } from '@/lib/formato'
 import AvisoFlotante from '@/components/ui/AvisoFlotante.vue'
 import BotonBase from '@/components/ui/BotonBase.vue'
 import MenuDesplegable from '@/components/ui/MenuDesplegable.vue'
@@ -173,7 +173,7 @@ watch(esMovil, (movil) => {
       aria-label="Navegación principal"
     >
       <div class="marca">
-        <span class="logo" aria-hidden="true">€</span>
+        <span class="logo" aria-hidden="true">{{ simboloDe() }}</span>
         <span v-if="!colapsada" class="nombre-app">Gestor de presupuesto</span>
         <button
           v-if="!lg"

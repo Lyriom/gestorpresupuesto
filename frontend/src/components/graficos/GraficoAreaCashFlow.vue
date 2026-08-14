@@ -4,7 +4,7 @@
  *
  * Barras divergentes sobre la línea cero —ingresos arriba, gastos abajo— y
  * encima el saldo acumulado como línea con su área al 10 %. Las dos magnitudes
- * son euros, así que comparten eje: aquí no hay doble eje Y, nunca lo hay.
+ * son dinero, así que comparten eje: aquí no hay doble eje Y, nunca lo hay.
  *
  * El color no es verde/rojo sino la rampa divergente ámbar↔azul: es una escala,
  * y verde/rojo colapsa bajo daltonismo. La dirección de la barra y el signo del
@@ -14,7 +14,7 @@ import { computed, ref } from 'vue'
 import { Bar } from 'vue-chartjs'
 import type { ChartData, ChartOptions, Plugin } from 'chart.js'
 
-import { euros } from '@/lib/formato'
+import { dinero } from '@/lib/formato'
 import MarcoGrafico from './MarcoGrafico.vue'
 import {
   conAlfa,
@@ -140,10 +140,10 @@ const filas = computed<FilaTabla[]>(() =>
     clave: `${punto.etiqueta}-${i}`,
     celdas: [
       punto.etiqueta,
-      euros(punto.ingresos, { signoSiempre: true }),
-      euros(-punto.gastos),
-      euros(punto.ingresos - punto.gastos, { signoSiempre: true }),
-      euros(saldos.value[i]),
+      dinero(punto.ingresos, { signoSiempre: true }),
+      dinero(-punto.gastos),
+      dinero(punto.ingresos - punto.gastos, { signoSiempre: true }),
+      dinero(saldos.value[i]),
     ],
   })),
 )
@@ -152,7 +152,7 @@ const resumenAuto = computed(() => {
   if (props.resumen) return props.resumen
   const ultimo = saldos.value[saldos.value.length - 1]
   const cierre =
-    typeof ultimo === 'number' ? ` El saldo acumulado termina en ${euros(ultimo)}.` : ''
+    typeof ultimo === 'number' ? ` El saldo acumulado termina en ${dinero(ultimo)}.` : ''
   return `${props.titulo ?? 'Entradas y salidas'}: ${props.puntos.length} periodos con ingresos, gastos y saldo acumulado.${cierre} Los datos están en la tabla siguiente.`
 })
 </script>

@@ -1727,8 +1727,8 @@ def _motivos_de_bloqueo(
         )
     if factura.total_amount is not None and not cuadra(factura, lineas):
         motivos.append(
-            f"Las líneas suman {formato.euros(suma_de(lineas))} y el total de la factura es "
-            f"{formato.euros(factura.total_amount)}."
+            f"Las líneas suman {formato.dinero(suma_de(lineas))} y el total de la factura es "
+            f"{formato.dinero(factura.total_amount)}."
         )
     return motivos
 
@@ -2319,8 +2319,8 @@ async def confirmar(
         descuadre = cuantizar(suma_de(lineas) - factura.total_amount)
         if not datos.allow_total_mismatch:
             raise ReglaDeNegocio(
-                f"Las líneas suman {formato.euros(suma_de(lineas))} y el total es "
-                f"{formato.euros(factura.total_amount)}. Revisa las líneas o confirma "
+                f"Las líneas suman {formato.dinero(suma_de(lineas))} y el total es "
+                f"{formato.dinero(factura.total_amount)}. Revisa las líneas o confirma "
                 "aceptando el descuadre.",
                 codigo="total_no_cuadra",
             )

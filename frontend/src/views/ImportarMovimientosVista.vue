@@ -45,7 +45,7 @@ import InterruptorBase from '@/components/ui/InterruptorBase.vue'
 import ModalBase from '@/components/ui/ModalBase.vue'
 import SelectorBase from '@/components/ui/SelectorBase.vue'
 import { useAvisos } from '@/composables/useAvisos'
-import { euros, fechaCorta } from '@/lib/formato'
+import { dinero, fechaCorta } from '@/lib/formato'
 import { useCategorias } from '@/stores/categorias'
 import { useCuentas } from '@/stores/cuentas'
 import { useImportaciones } from '@/stores/importaciones'
@@ -640,15 +640,15 @@ onBeforeUnmount(() => importaciones.detenerSondeo())
             </span>
           </p>
           <p class="cifra">
-            <span class="valor num">{{ euros(importaciones.totalImportar) }}</span>
+            <span class="valor num">{{ dinero(importaciones.totalImportar) }}</span>
             <span class="rotulo">saldo del lote</span>
           </p>
           <p class="cifra">
-            <span class="valor num gasto">{{ euros(importaciones.totalGastos) }}</span>
+            <span class="valor num gasto">{{ dinero(importaciones.totalGastos) }}</span>
             <span class="rotulo">en gastos</span>
           </p>
           <p class="cifra">
-            <span class="valor num ingreso">{{ euros(importaciones.totalIngresos) }}</span>
+            <span class="valor num ingreso">{{ dinero(importaciones.totalIngresos) }}</span>
             <span class="rotulo">en ingresos</span>
           </p>
           <p class="cifra">

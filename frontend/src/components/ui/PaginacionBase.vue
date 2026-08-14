@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { ChevronLeft, ChevronRight, LoaderCircle } from 'lucide-vue-next'
+import { localeActual } from '@/lib/formato'
 
 /** Cifras no monetarias: `1.284 movimientos`. formato.ts solo formatea dinero. */
-const fmtEnteros = new Intl.NumberFormat('es-ES')
+// El idioma se conoce cuando responde `/meta`, así que el formateador se
+// construye en cada uso y no al cargar el módulo. Son números de paginación:
+// se pintan unas pocas veces por pantalla, no cientos.
+const enteros = (n: number) => new Intl.NumberFormat(localeActual()).format(n)
 
 const props = withDefaults(
   defineProps<{
@@ -31,7 +35,7 @@ const hasta = computed(() => Math.min(props.total, props.pagina * props.tamanyoP
 const rotulo = computed(() => {
   if (props.total === 0) return 'Sin resultados'
   const cola = props.unidad ? ` ${props.unidad}` : ''
-  return `Mostrando ${fmtEnteros.format(desde.value)}–${fmtEnteros.format(hasta.value)} de ${fmtEnteros.format(props.total)}${cola}`
+  return `Mostrando ${enteros(desde.value)}–${enteros(hasta.value)} de ${enteros(props.total)}${cola}`
 })
 
 /** Máximo 7 números visibles con elisión: `1 … 4 5 6 … 43`. */

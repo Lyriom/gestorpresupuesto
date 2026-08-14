@@ -30,7 +30,7 @@ import InterruptorBase from '@/components/ui/InterruptorBase.vue'
 import SelectorBase from '@/components/ui/SelectorBase.vue'
 import AvisoFlotante from '@/components/ui/AvisoFlotante.vue'
 import { useAvisos } from '@/composables/useAvisos'
-import { etiquetaPeriodo, euros, periodoDe } from '@/lib/formato'
+import { etiquetaPeriodo, dinero, periodoDe } from '@/lib/formato'
 import { ranuraDeCategoria, useCategorias } from '@/stores/categorias'
 import { mensajeDeError } from '@/stores/comun'
 import { useSesion } from '@/stores/sesion'
@@ -140,7 +140,8 @@ async function irAlPaso2(): Promise<void> {
         accounts: cuentasValidas.value.map((c) => ({
           name: c.nombre.trim(),
           type: c.tipo,
-          currency: 'EUR',
+          // Sin `currency`: el backend la pone del hogar. Estaba fija en 'EUR' y
+          // creaba las cuentas en euros aunque la instalación fuese en dólares.
           initial_balance: importeDeCentimos(c.centimos) ?? '0.00',
         })),
       })
@@ -310,7 +311,7 @@ onMounted(() => {
           <p class="rotulo">Cuentas añadidas</p>
           <ul class="chips">
             <li v-for="c in cuentasCreadas" :key="c.id" class="chip num">
-              {{ c.nombre }} · {{ euros(c.saldo) }}
+              {{ c.nombre }} · {{ dinero(c.saldo) }}
             </li>
           </ul>
         </div>
@@ -350,7 +351,7 @@ onMounted(() => {
 
         <p class="total num">
           Total de ingresos de {{ nombreMes }}
-          <strong>{{ euros(totalIngresosCentimos / 100) }}</strong>
+          <strong>{{ dinero(totalIngresosCentimos / 100) }}</strong>
         </p>
         <p v-if="!puedeSalirDelPaso2" class="ayuda">Sin ingresos no hay nada que repartir.</p>
       </section>
@@ -375,7 +376,7 @@ onMounted(() => {
 
         <template v-if="elegidasEnOrden.length > 0">
           <p class="rotulo">
-            Reparte {{ euros(totalIngresosCentimos / 100) }} entre las temáticas elegidas
+            Reparte {{ dinero(totalIngresosCentimos / 100) }} entre las temáticas elegidas
           </p>
           <ul class="filas">
             <li v-for="c in elegidasEnOrden" :key="c.id" class="fila-reparto">
@@ -393,7 +394,7 @@ onMounted(() => {
             </li>
           </ul>
           <p class="total num">
-            Sin asignar <strong>{{ euros(sinAsignarCentimos / 100) }}</strong>
+            Sin asignar <strong>{{ dinero(sinAsignarCentimos / 100) }}</strong>
             <span class="ayuda"> · no pasa nada si no lo repartes todo hoy</span>
           </p>
         </template>

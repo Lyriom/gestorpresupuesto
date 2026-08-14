@@ -509,7 +509,11 @@ async def test_un_token_de_refresco_no_sirve_como_acceso(cliente: AsyncClient) -
 async def test_meta_es_publico(cliente: AsyncClient) -> None:
     respuesta = await cliente.get(f"{PREFIJO}/meta")
     assert respuesta.status_code == 200
-    assert respuesta.json()["default_currency"] == "EUR"
+    # El frontend formatea con lo que diga aquí, así que tiene que ser lo
+    # configurado y no un valor escrito en el código.
+    cuerpo = respuesta.json()
+    assert cuerpo["default_currency"] == settings.default_currency
+    assert cuerpo["default_locale"] == settings.default_locale
 
 
 async def test_perfil_guarda_idioma_zona_y_tema(cliente: AsyncClient) -> None:

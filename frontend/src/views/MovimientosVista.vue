@@ -29,7 +29,7 @@ import PaginacionBase from '@/components/ui/PaginacionBase.vue'
 import SelectorBase from '@/components/ui/SelectorBase.vue'
 import TablaDatos, { type ColumnaTabla } from '@/components/ui/TablaDatos.vue'
 import { useAvisos } from '@/composables/useAvisos'
-import { euros, fechaCorta, porcentaje } from '@/lib/formato'
+import { dinero, fechaCorta, porcentaje } from '@/lib/formato'
 import { aQuery, aplicarQueryAlStore, deQuery } from '@/router'
 import { ranuraDeCategoria, useCategorias } from '@/stores/categorias'
 import { mensajeDeError } from '@/stores/comun'
@@ -134,7 +134,7 @@ const chips = computed(() => {
   if (f.minimo || f.maximo) {
     salida.push({
       clave: 'importes',
-      etiqueta: `${f.minimo ? euros(f.minimo) : '…'} – ${f.maximo ? euros(f.maximo) : '…'}`,
+      etiqueta: `${f.minimo ? dinero(f.minimo) : '…'} – ${f.maximo ? dinero(f.maximo) : '…'}`,
     })
   }
   if (f.conFactura === true) salida.push({ clave: 'factura', etiqueta: 'Solo con factura' })
@@ -222,7 +222,7 @@ const textoBorrado = computed(() => {
   const m = enBorrado.value
   if (!m) return ''
   const tipo = m.kind === 'income' ? 'el ingreso' : 'el gasto'
-  return `Se eliminará ${tipo} de ${euros(m.amount)} del ${fechaCorta(m.date)}. Esta acción no se puede deshacer.`
+  return `Se eliminará ${tipo} de ${dinero(m.amount)} del ${fechaCorta(m.date)}. Esta acción no se puede deshacer.`
 })
 
 async function confirmarBorrado(): Promise<void> {
@@ -359,7 +359,7 @@ watch(
       expandible
       :vacio-por-filtro="lista.hayFiltros"
       :error="lista.error ?? undefined"
-      :rotulo-totales="`Total de ${lista.total} resultados filtrados: ${euros(lista.totalFiltrado)}`"
+      :rotulo-totales="`Total de ${lista.total} resultados filtrados: ${dinero(lista.totalFiltrado)}`"
       @update:orden="
         (o) => {
           lista.orden = o
@@ -414,7 +414,7 @@ watch(
 
       <template #celda-amount="{ fila }">
         <span :class="fila.kind === 'income' ? 'positivo' : ''">
-          {{ euros(fila.signed_amount, { signoSiempre: true }) }}
+          {{ dinero(fila.signed_amount, { signoSiempre: true }) }}
         </span>
       </template>
 
@@ -429,7 +429,7 @@ watch(
                 :ranura="ranuraDeCategoria(s.category.color, s.category.id)"
                 tamanyo="sm"
               />
-              <span class="num">{{ euros(s.amount) }}</span>
+              <span class="num">{{ dinero(s.amount) }}</span>
               <span class="num tenue">
                 {{ porcentaje(Number(s.amount) / Number(fila.amount)) }}
               </span>
@@ -581,7 +581,7 @@ watch(
     >
       <div v-if="lista.seleccionado" class="cajon">
         <p class="importe-grande num num-grande">
-          {{ euros(lista.seleccionado.signed_amount, { signoSiempre: true }) }}
+          {{ dinero(lista.seleccionado.signed_amount, { signoSiempre: true }) }}
         </p>
         <dl class="datos">
           <dt>Fecha</dt>
@@ -617,7 +617,7 @@ watch(
               :ranura="ranuraDeCategoria(s.category.color, s.category.id)"
               tamanyo="sm"
             />
-            <span class="num">{{ euros(s.amount) }}</span>
+            <span class="num">{{ dinero(s.amount) }}</span>
           </li>
         </ul>
       </div>

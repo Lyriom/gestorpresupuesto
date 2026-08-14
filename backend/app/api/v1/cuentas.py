@@ -27,6 +27,7 @@ from app.core.config import settings
 from app.core.errors import Conflicto, NoEncontrado, ReglaDeNegocio
 from app.models.categoria import Category
 from app.models.cuenta import Account, LoanTerms, Reconciliation
+from app.models.hogar import Household
 from app.models.recurrente import RecurringOccurrence, RecurringRule
 from app.models.transaccion import Transaction
 from app.schemas.comun import Pagina
@@ -239,6 +240,14 @@ async def _detalle(alcance: AlcanceHogar, cuenta: Account) -> CuentaRespuesta:
 # --------------------------------------------------------------------------- #
 
 
+async def moneda_del_hogar_actual(alcance: AlcanceHogar) -> str:
+    """La divisa del hogar en curso, o la de la instalación si no la tuviera."""
+    moneda = await alcance.sesion.scalar(
+        select(Household.currency).where(Household.id == alcance.household_id)
+    )
+    return moneda or settings.default_currency
+
+
 async def crear_cuenta_en_hogar(alcance: AlcanceHogar, datos: CuentaCrear) -> Account:
     """Alta de una cuenta. Compartida con la puesta en marcha (`/onboarding/seed`)."""
     sesion = alcance.sesion
@@ -260,7 +269,7 @@ async def crear_cuenta_en_hogar(alcance: AlcanceHogar, datos: CuentaCrear) -> Ac
         name=datos.name,
         type=tipo,
         account_class=CLASE_POR_TIPO[tipo],
-        currency=datos.currency,
+        currency=datos.currency or await moneda_del_hogar_actual(alcance),
         opening_balance=datos.initial_balance,
         opened_on=datos.opened_on or date.today(),
         credit_limit=datos.credit_limit,

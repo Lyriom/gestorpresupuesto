@@ -59,9 +59,14 @@ class Settings(BaseSettings):
     ocr_languages: str = "spa+eng"
 
     # --- Localización -------------------------------------------------------
-    default_currency: str = "EUR"
-    default_locale: str = "es-ES"
-    default_timezone: str = "Europe/Madrid"
+    # Ecuador: dólar estadounidense, español de Ecuador y hora de Guayaquil. Los
+    # separadores de `es-EC` son los mismos que los de España (miles con punto y
+    # decimales con coma); lo que cambia es el símbolo, que va delante y pegado.
+    # Los tres son de la instalación y se cambian por entorno; la moneda de cada
+    # hogar además se puede cambiar luego en Ajustes.
+    default_currency: str = "USD"
+    default_locale: str = "es-EC"
+    default_timezone: str = "America/Guayaquil"
 
     # --- Frontend compilado -------------------------------------------------
     # En producción el monolito sirve los estáticos de Vue desde este directorio.

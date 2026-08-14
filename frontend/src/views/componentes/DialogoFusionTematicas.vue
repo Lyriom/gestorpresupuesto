@@ -17,7 +17,7 @@ import InterruptorBase from '@/components/ui/InterruptorBase.vue'
 import ModalBase from '@/components/ui/ModalBase.vue'
 import SelectorBase from '@/components/ui/SelectorBase.vue'
 import { useAvisos } from '@/composables/useAvisos'
-import { euros } from '@/lib/formato'
+import { dinero } from '@/lib/formato'
 import { ranuraDeCategoria, useCategorias } from '@/stores/categorias'
 
 const props = defineProps<{
@@ -164,7 +164,7 @@ watch(
             </li>
             <li v-if="previa.budget_periods > 0">
               El presupuesto asignado se sumará al del destino:
-              {{ euros(previa.allocations_merged) }} en
+              {{ dinero(previa.allocations_merged) }} en
               {{ previa.budget_periods }}
               {{ previa.budget_periods === 1 ? 'periodo' : 'periodos' }}.
             </li>

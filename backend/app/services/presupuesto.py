@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 
-from app.services.formato import CENTIMO, cuantizar, euros
+from app.services.formato import CENTIMO, cuantizar, dinero
 
 CERO = Decimal("0.00")
 
@@ -258,20 +258,20 @@ def calcular_barra(
         )
     elif sin_asignar < CERO:
         barra.avisos.append(
-            f"Has repartido {euros(-sin_asignar)} más de lo que has ingresado este mes."
+            f"Has repartido {dinero(-sin_asignar)} más de lo que has ingresado este mes."
         )
 
     sobrepasadas = barra.categorias_sobrepasadas
     if sobrepasadas:
         if len(sobrepasadas) == 1:
             barra.avisos.append(
-                f"Te has pasado {euros(sobrepasadas[0].sobrepaso)} en {sobrepasadas[0].nombre}."
+                f"Te has pasado {dinero(sobrepasadas[0].sobrepaso)} en {sobrepasadas[0].nombre}."
             )
         else:
             total = sum((s.sobrepaso for s in sobrepasadas), CERO)
             barra.avisos.append(
                 f"Te has pasado del presupuesto en {len(sobrepasadas)} temáticas "
-                f"({euros(total)} en total)."
+                f"({dinero(total)} en total)."
             )
 
     sin_presupuesto = [s for s in segmentos if s.estado is EstadoSegmento.SIN_ASIGNAR]

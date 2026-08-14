@@ -10,7 +10,7 @@ import { computed, ref } from 'vue'
 import { Doughnut } from 'vue-chartjs'
 import type { ChartData, ChartOptions, LegendItem, TooltipItem } from 'chart.js'
 
-import { euros, porcentaje } from '@/lib/formato'
+import { dinero, porcentaje } from '@/lib/formato'
 import MarcoGrafico from './MarcoGrafico.vue'
 import {
   colorDeSerie,
@@ -107,7 +107,7 @@ const opciones = computed<ChartOptions<'doughnut'>>(() => {
         callbacks: {
           label: (item: TooltipItem<'doughnut'>) => {
             const valor = Number(item.parsed ?? 0)
-            return `${euros(valor)} · ${porcentaje(proporcion(valor))} del total`
+            return `${dinero(valor)} · ${porcentaje(proporcion(valor))} del total`
           },
         },
       },
@@ -120,18 +120,18 @@ const columnas = computed(() => [props.columnaEtiquetas, 'Importe', '% del total
 const filas = computed<FilaTabla[]>(() => [
   ...plegadas.value.map((p, i) => ({
     clave: `${p.nombre}-${i}`,
-    celdas: [p.nombre, euros(p.valor), porcentaje(proporcion(p.valor))],
+    celdas: [p.nombre, dinero(p.valor), porcentaje(proporcion(p.valor))],
   })),
-  { clave: '__total', celdas: ['Total', euros(total.value), porcentaje(total.value > 0 ? 1 : 0)] },
+  { clave: '__total', celdas: ['Total', dinero(total.value), porcentaje(total.value > 0 ? 1 : 0)] },
 ])
 
 const resumenAuto = computed(() => {
   if (props.resumen) return props.resumen
   const mayor = plegadas.value[0]
   const cabeza = mayor
-    ? ` La porción mayor es ${mayor.nombre}, ${euros(mayor.valor)}, ${porcentaje(proporcion(mayor.valor))} del total.`
+    ? ` La porción mayor es ${mayor.nombre}, ${dinero(mayor.valor)}, ${porcentaje(proporcion(mayor.valor))} del total.`
     : ''
-  return `${props.titulo ?? 'Reparto'}: ${plegadas.value.length} porciones, total ${euros(total.value)}.${cabeza} Los datos están en la tabla contigua.`
+  return `${props.titulo ?? 'Reparto'}: ${plegadas.value.length} porciones, total ${dinero(total.value)}.${cabeza} Los datos están en la tabla contigua.`
 })
 </script>
 

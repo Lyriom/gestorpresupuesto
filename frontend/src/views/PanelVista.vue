@@ -19,7 +19,7 @@ import BotonBase from '@/components/ui/BotonBase.vue'
 import EsqueletoCarga from '@/components/ui/EsqueletoCarga.vue'
 import EstadoVacio from '@/components/ui/EstadoVacio.vue'
 import EtiquetaCategoria from '@/components/ui/EtiquetaCategoria.vue'
-import { etiquetaPeriodo, euros, fechaCorta, porcentaje } from '@/lib/formato'
+import { etiquetaPeriodo, dinero, fechaCorta, porcentaje } from '@/lib/formato'
 import { accionDe, useAlertas } from '@/stores/alertas'
 import { mensajeDeError } from '@/stores/comun'
 import { ranuraDeCategoria } from '@/stores/categorias'
@@ -240,9 +240,9 @@ watch(
                   tamanyo="sm"
                 />
               </th>
-              <td class="num-col num">{{ euros(a.spent) }}</td>
-              <td class="num-col num">{{ euros(a.allocated) }}</td>
-              <td class="num-col num">{{ euros(a.available) }}</td>
+              <td class="num-col num">{{ dinero(a.spent) }}</td>
+              <td class="num-col num">{{ dinero(a.allocated) }}</td>
+              <td class="num-col num">{{ dinero(a.available) }}</td>
               <td class="num-col num">{{ porcentaje(a.spent_pct) }}</td>
             </tr>
           </tbody>
@@ -303,7 +303,7 @@ watch(
           <span v-else class="sin-tematica">Sin clasificar</span>
           <span class="cuenta">{{ m.account?.name ?? '' }}</span>
           <span class="importe num" :class="m.kind === 'income' ? 'positivo' : 'negativo'">
-            {{ euros(m.signed_amount, { signoSiempre: true }) }}
+            {{ dinero(m.signed_amount, { signoSiempre: true }) }}
           </span>
         </li>
       </ul>

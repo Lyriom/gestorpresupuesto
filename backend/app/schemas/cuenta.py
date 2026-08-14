@@ -47,7 +47,9 @@ TipoInteres = Annotated[Decimal, Field(ge=0, le=100, decimal_places=4)]
 class CuentaCrear(Peticion):
     name: Nombre
     type: TipoCuenta
-    currency: Moneda = "EUR"
+    #: Sin indicar, la del hogar. Estaba fija en "EUR" y una instalación en
+    #: dólares creaba las cuentas en euros sin que nadie lo pidiera.
+    currency: Moneda | None = None
     initial_balance: ImporteStr = Decimal("0.00")
     opened_on: date | None = None
     color: ColorHex | None = None

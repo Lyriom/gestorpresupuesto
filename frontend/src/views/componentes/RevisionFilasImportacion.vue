@@ -26,7 +26,7 @@ import EsqueletoCarga from '@/components/ui/EsqueletoCarga.vue'
 import EstadoVacio from '@/components/ui/EstadoVacio.vue'
 import InterruptorBase from '@/components/ui/InterruptorBase.vue'
 import PestanyasBase from '@/components/ui/PestanyasBase.vue'
-import { aNumero, euros, fechaCorta, parsearImporte } from '@/lib/formato'
+import { aNumero, dinero, fechaCorta, parsearImporte , simboloDe } from '@/lib/formato'
 
 const props = defineProps<{
   filas: FilaImportacion[]
@@ -328,12 +328,12 @@ function etiquetaEstado(fila: FilaImportacion): string {
                       :model-value="borradorDe(fila).importe"
                       etiqueta="Importe"
                       etiqueta-oculta
-                      sufijo="€"
+                      :sufijo="simboloDe()"
                       :error="cambiada(fila) ? errorDeImporte(fila) : undefined"
                       @update:model-value="editar(fila, { importe: $event })"
                     />
                     <span v-else class="num" :class="{ gasto: (fila.amount ?? '').startsWith('-') }">
-                      {{ fila.amount ? euros(fila.amount) : '—' }}
+                      {{ fila.amount ? dinero(fila.amount) : '—' }}
                     </span>
                   </td>
 

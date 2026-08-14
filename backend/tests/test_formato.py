@@ -28,28 +28,49 @@ class TestNumero:
         assert formato.numero(Decimal("1234"), decimales=0) == "1.234"
 
 
-class TestEuros:
-    def test_lleva_el_simbolo_detras(self):
-        assert formato.euros(Decimal("1234.5")) == "1.234,50 €"
+class TestDinero:
+    """La moneda va explícita en cada llamada: así la prueba no depende del
+    `DEFAULT_CURRENCY` de quien la ejecute."""
+
+    def test_el_dolar_va_delante_y_pegado(self):
+        assert formato.dinero(Decimal("1234.5"), moneda="USD") == "$1.234,50"
+
+    def test_el_euro_va_detras_y_separado(self):
+        assert formato.dinero(Decimal("1234.5"), moneda="EUR") == "1.234,50 €"
+
+    def test_el_menos_va_antes_del_simbolo(self):
+        # "$-25,00" no se escribe así en ningún sitio.
+        assert formato.dinero(Decimal("-25"), moneda="USD") == "-$25,00"
+        assert formato.dinero(Decimal("-25"), moneda="EUR") == "-25,00 €"
+
+    def test_una_moneda_desconocida_sale_con_su_codigo(self):
+        assert formato.dinero(Decimal("30"), moneda="XYZ") == "30,00 XYZ"
 
     def test_nunca_deja_el_punto_decimal_del_decimal(self):
         # El fallo que motivó este módulo: los avisos mostraban "250.00 €".
-        assert "." not in formato.euros(Decimal("250")).split(",")[1]
-        assert formato.euros(Decimal("250")) == "250,00 €"
+        assert "." not in formato.dinero(Decimal("250")).split(",")[1]
+        assert formato.dinero(Decimal("250"), moneda="EUR") == "250,00 €"
+
+    def test_sigue_la_moneda_de_la_instalacion_si_no_se_indica(self):
+        formato.fijar_moneda("EUR")
+        assert formato.dinero(Decimal("250")) == "250,00 €"
+        formato.fijar_moneda("USD")
+        assert formato.dinero(Decimal("250")) == "$250,00"
 
 
 class TestPrecio:
     def test_dos_decimales_cuando_bastan(self):
-        assert formato.precio(Decimal("1.15")) == "1,15 €"
+        assert formato.precio(Decimal("1.15"), moneda="EUR") == "1,15 €"
 
     def test_conserva_los_decimales_del_kwh(self):
-        assert formato.precio(Decimal("0.1489")) == "0,1489 €"
+        assert formato.precio(Decimal("0.1489"), moneda="EUR") == "0,1489 €"
+        assert formato.precio(Decimal("0.1489"), moneda="USD") == "$0,1489"
 
     def test_recorta_a_cuatro_decimales(self):
-        assert formato.precio(Decimal("0.148900")) == "0,1489 €"
+        assert formato.precio(Decimal("0.148900"), moneda="EUR") == "0,1489 €"
 
     def test_un_entero_sale_con_dos_decimales(self):
-        assert formato.precio(Decimal("9")) == "9,00 €"
+        assert formato.precio(Decimal("9"), moneda="EUR") == "9,00 €"
 
 
 class TestPorcentaje:
@@ -64,6 +85,12 @@ class TestPorcentaje:
 
 
 class TestEnLosMensajesReales:
+    @pytest.fixture(autouse=True)
+    def _en_euros(self):
+        """Se comprueba el euro a propósito: es el caso del símbolo detrás, con
+        espacio, que es el que rompía cuando el importe llevaba punto decimal."""
+        formato.fijar_moneda("EUR")
+
     def test_el_aviso_de_sobrepaso_va_en_espanyol(self):
         from app.services.presupuesto import EntradaCategoria, calcular_barra
 

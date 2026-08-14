@@ -24,7 +24,7 @@ import EtiquetaCategoria from '@/components/ui/EtiquetaCategoria.vue'
 import ModalBase from '@/components/ui/ModalBase.vue'
 import SelectorBase from '@/components/ui/SelectorBase.vue'
 import { useAvisos } from '@/composables/useAvisos'
-import { euros, porcentaje } from '@/lib/formato'
+import { dinero, porcentaje } from '@/lib/formato'
 import { ranuraDeCategoria, useCategorias } from '@/stores/categorias'
 import { useCuentas } from '@/stores/cuentas'
 import { erroresPorCampo, mensajeDeError } from '@/stores/comun'
@@ -110,12 +110,12 @@ const repartoCuadra = computed(
 const mensajeReparto = computed(() => {
   if (reparto.value.length === 0) return null
   if (repartoCuadra.value) {
-    return `Repartido: ${euros(repartidoCentimos.value / 100)} de ${euros(totalCentimos.value / 100)} · cuadra`
+    return `Repartido: ${dinero(repartidoCentimos.value / 100)} de ${dinero(totalCentimos.value / 100)} · cuadra`
   }
   if (restanteCentimos.value > 0) {
-    return `El reparto no suma el importe total. Faltan ${euros(restanteCentimos.value / 100)}.`
+    return `El reparto no suma el importe total. Faltan ${dinero(restanteCentimos.value / 100)}.`
   }
-  return `El reparto supera el importe total. Sobran ${euros(-restanteCentimos.value / 100)}.`
+  return `El reparto supera el importe total. Sobran ${dinero(-restanteCentimos.value / 100)}.`
 })
 
 function porcentajeDeLinea(linea: LineaReparto): string {

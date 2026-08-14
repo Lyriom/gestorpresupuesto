@@ -17,7 +17,7 @@ import {
   Plus,
   Trash2,
 } from 'lucide-vue-next'
-import { euros, fechaCorta, periodoDe } from '@/lib/formato'
+import { dinero, fechaCorta, periodoDe } from '@/lib/formato'
 import { useAvisos } from '@/composables/useAvisos'
 import LayoutApp from '@/layouts/LayoutApp.vue'
 import LayoutAuth from '@/layouts/LayoutAuth.vue'
@@ -267,12 +267,12 @@ const TOKENS_SEMANTICOS = ['--c-accent', '--c-positive', '--c-negative', '--c-wa
         </div>
       </div>
       <p class="cifras">
-        <span class="hero num num-grande">{{ euros(245000 / 100) }}</span>
+        <span class="hero num num-grande">{{ dinero(245000 / 100) }}</span>
         <span class="positivo num">
-          <ArrowUpRight :size="14" aria-hidden="true" />+{{ euros(1250) }}
+          <ArrowUpRight :size="14" aria-hidden="true" />+{{ dinero(1250) }}
         </span>
         <span class="negativo num">
-          <ArrowDownRight :size="14" aria-hidden="true" />-{{ euros(874.5) }}
+          <ArrowDownRight :size="14" aria-hidden="true" />-{{ dinero(874.5) }}
         </span>
       </p>
     </section>
@@ -467,7 +467,7 @@ const TOKENS_SEMANTICOS = ['--c-accent', '--c-positive', '--c-negative', '--c-wa
         </template>
         <template #celda-importe="{ fila }">
           <span :class="fila.tipo === 'ingreso' ? 'positivo' : 'negativo'">
-            {{ euros(fila.importe / 100, { signoSiempre: true }) }}
+            {{ dinero(fila.importe / 100, { signoSiempre: true }) }}
           </span>
         </template>
         <template #detalle="{ fila }">

@@ -20,7 +20,7 @@ import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import { ArrowLeft, CircleAlert, Table2, TriangleAlert } from 'lucide-vue-next'
 
-import { aNumero, euros, etiquetaPeriodo, periodoDe, porcentaje } from '@/lib/formato'
+import { aNumero, dinero, etiquetaPeriodo, periodoDe, porcentaje } from '@/lib/formato'
 import BarraCategoria from './BarraCategoria.vue'
 import { COLOR_OTROS, colorDeCategoria } from './colores'
 import type { AsignacionTematica, CifrasMes, PresupuestoMes, TramoBarra } from './types'
@@ -475,7 +475,7 @@ const titulo = computed(() => {
 
 const resumenTexto = computed(() => {
   const c = cifras.value
-  return `${euros(c.ingresos)} de ingresos. ${euros(c.asignado)} asignados. ${euros(c.gastado)} gastados. ${euros(c.disponible)} disponibles.`
+  return `${dinero(c.ingresos)} de ingresos. ${dinero(c.asignado)} asignados. ${dinero(c.gastado)} gastados. ${dinero(c.disponible)} disponibles.`
 })
 
 function etiquetaTramo(t: TramoBarra | undefined, i: number): string {
@@ -483,14 +483,14 @@ function etiquetaTramo(t: TramoBarra | undefined, i: number): string {
   const posicionTexto = `segmento ${i + 1} de ${tramos.value.length}`
   const delTotal = `${porcentaje(t.anchoPct / 100)} del presupuesto`
   if (t.tipo === 'sin-asignar') {
-    return `Sin asignar: ${euros(t.importe)}, ${delTotal}, ${posicionTexto}.`
+    return `Sin asignar: ${dinero(t.importe)}, ${delTotal}, ${posicionTexto}.`
   }
   if (t.tipo === 'en-rojo') {
-    return `En rojo: ${euros(t.importe)} gastados por encima de los ingresos, ${posicionTexto}.`
+    return `En rojo: ${dinero(t.importe)} gastados por encima de los ingresos, ${posicionTexto}.`
   }
   const efectivo = t.importe + t.arrastrado
-  const base = `${t.nombre}: ${euros(t.gastado)} gastados de ${euros(efectivo)} asignados, ${porcentaje(t.consumidoPct / 100)} de lo asignado, ${delTotal}`
-  const exceso = t.sobrepaso > 0 ? `, sobrepasada en ${euros(t.sobrepaso)}` : ''
+  const base = `${t.nombre}: ${dinero(t.gastado)} gastados de ${dinero(efectivo)} asignados, ${porcentaje(t.consumidoPct / 100)} de lo asignado, ${delTotal}`
+  const exceso = t.sobrepaso > 0 ? `, sobrepasada en ${dinero(t.sobrepaso)}` : ''
   const grupo = t.tipo === 'otros' ? `, agrupa ${t.asignaciones.length} temáticas` : ''
   return `${base}${exceso}${grupo}, ${posicionTexto}.`
 }
@@ -507,7 +507,7 @@ function textoRitmo(t: TramoBarra): string | null {
       : t.consumidoPct > transcurrido + 10
         ? 'vas rápido'
         : 'vas bien'
-  return `Ritmo: ${euros(porDia)}/día · ${juicio}`
+  return `Ritmo: ${dinero(porDia)}/día · ${juicio}`
 }
 
 const tramoOtros = computed(() => tramos.value.find((t) => t.tipo === 'otros') ?? null)
@@ -585,22 +585,22 @@ const hayCabecera = computed(() => props.mostrarCabecera && !props.anidada)
       <header v-if="hayCabecera" class="cabecera">
         <div>
           <h2 :id="`${id}-titulo`" class="titulo">{{ titulo }}</h2>
-          <p class="cifra-heroe">{{ euros(cifras.ingresos) }}</p>
+          <p class="cifra-heroe">{{ dinero(cifras.ingresos) }}</p>
           <!-- Una frase seguida para el lector de pantalla: la línea de cifras de
                abajo está troceada en spans y se lee peor. -->
           <p :id="`${id}-resumen`" class="solo-lectores">{{ resumenTexto }}</p>
           <p class="linea-cifras">
             <span v-if="cifras.sobreasignado" class="alerta-suave">
               <CircleAlert :size="14" aria-hidden="true" />
-              Asignado {{ euros(cifras.asignado) }} de {{ euros(cifras.ingresos) }}
+              Asignado {{ dinero(cifras.asignado) }} de {{ dinero(cifras.ingresos) }}
             </span>
-            <span v-else>Asignado {{ euros(cifras.asignado) }}</span>
+            <span v-else>Asignado {{ dinero(cifras.asignado) }}</span>
             <span aria-hidden="true">·</span>
             <span :class="{ 'alerta-fuerte': cifras.enRojo }">
-              Gastado {{ euros(cifras.gastado) }}
+              Gastado {{ dinero(cifras.gastado) }}
             </span>
             <span aria-hidden="true">·</span>
-            <span>Disponible {{ euros(cifras.disponible) }}</span>
+            <span>Disponible {{ dinero(cifras.disponible) }}</span>
           </p>
         </div>
         <p class="etiqueta-ingresos">Ingresos del mes</p>
@@ -688,9 +688,9 @@ const hayCabecera = computed(() => props.mostrarCabecera && !props.anidada)
                     <span class="tarjeta-barra-relleno" />
                   </span>
                   <span class="tarjeta-cifras">
-                    <template v-if="t.tipo === 'sin-asignar'">{{ euros(t.importe) }}</template>
+                    <template v-if="t.tipo === 'sin-asignar'">{{ dinero(t.importe) }}</template>
                     <template v-else>
-                      {{ euros(t.gastado) }} de {{ euros(t.importe + t.arrastrado) }}
+                      {{ dinero(t.gastado) }} de {{ dinero(t.importe + t.arrastrado) }}
                     </template>
                     <span class="tarjeta-pct">{{ porcentaje(t.anchoPct / 100) }}</span>
                   </span>
@@ -698,7 +698,7 @@ const hayCabecera = computed(() => props.mostrarCabecera && !props.anidada)
 
                 <span v-else-if="cabeEtiqueta(t)" class="etiqueta-interna" aria-hidden="true">
                   <span class="etiqueta-nombre">{{ t.nombre }}</span>
-                  <span class="etiqueta-importe">{{ euros(t.importe, { decimales: false }) }}</span>
+                  <span class="etiqueta-importe">{{ dinero(t.importe, { decimales: false }) }}</span>
                 </span>
 
                 <TriangleAlert
@@ -745,11 +745,11 @@ const hayCabecera = computed(() => props.mostrarCabecera && !props.anidada)
             >
               <p class="tooltip-valor">
                 <template v-if="tramoTooltip.tipo === 'sin-asignar'">
-                  {{ euros(tramoTooltip.importe) }}
+                  {{ dinero(tramoTooltip.importe) }}
                 </template>
                 <template v-else>
-                  {{ euros(tramoTooltip.gastado) }}
-                  <span class="tooltip-de">de {{ euros(tramoTooltip.importe + tramoTooltip.arrastrado) }}</span>
+                  {{ dinero(tramoTooltip.gastado) }}
+                  <span class="tooltip-de">de {{ dinero(tramoTooltip.importe + tramoTooltip.arrastrado) }}</span>
                 </template>
               </p>
               <p class="tooltip-nombre">
@@ -763,10 +763,10 @@ const hayCabecera = computed(() => props.mostrarCabecera && !props.anidada)
                 {{ porcentaje(tramoTooltip.anchoPct / 100) }} del presupuesto total
               </p>
               <p v-if="tramoTooltip.arrastrado !== 0" class="tooltip-linea">
-                Incluye {{ euros(tramoTooltip.arrastrado) }} del mes anterior
+                Incluye {{ dinero(tramoTooltip.arrastrado) }} del mes anterior
               </p>
               <p v-if="ritmo" class="tooltip-linea">
-                Quedan {{ euros(tramoTooltip.disponible) }} y {{ ritmo.diasRestantes }} días
+                Quedan {{ dinero(tramoTooltip.disponible) }} y {{ ritmo.diasRestantes }} días
               </p>
               <template v-if="textoRitmo(tramoTooltip)">
                 <hr class="tooltip-regla" />
@@ -786,18 +786,18 @@ const hayCabecera = computed(() => props.mostrarCabecera && !props.anidada)
                 :style="{ left: posicion(i) }"
               >
                 <span aria-hidden="true">▲</span>
-                {{ euros(t.sobrepaso) }} de más
+                {{ dinero(t.sobrepaso) }} de más
               </p>
             </template>
             <p v-else class="exceso-agregado">
               {{ excesosVisibles.length }} temáticas sobrepasadas ·
-              {{ euros(totalSobrepasado) }} de más
+              {{ dinero(totalSobrepasado) }} de más
             </p>
           </div>
 
           <p v-if="sobreasignacion" class="pie-de-mas">
             <span class="muestra-de-mas" aria-hidden="true" />
-            De más: {{ euros(sobreasignacion.importe) }} por encima de los ingresos
+            De más: {{ dinero(sobreasignacion.importe) }} por encima de los ingresos
           </p>
 
           <!-- Leyenda: gastado, asignado sin gastar y sin asignar. -->
@@ -829,7 +829,7 @@ const hayCabecera = computed(() => props.mostrarCabecera && !props.anidada)
               <TriangleAlert :size="16" aria-hidden="true" />
               <span>
                 {{ cifras.sobrepasadas[0].category.name }} sobrepasada en
-                {{ euros(cifras.sobrepasadas[0].overspent) }}
+                {{ dinero(cifras.sobrepasadas[0].overspent) }}
               </span>
               <span class="aviso-acciones">
                 <button type="button" class="boton-secundario" @click="emit('reasignar', cifras.sobrepasadas[0])">
@@ -844,7 +844,7 @@ const hayCabecera = computed(() => props.mostrarCabecera && !props.anidada)
               <TriangleAlert :size="16" aria-hidden="true" />
               <span>
                 {{ cifras.sobrepasadas.length }} temáticas sobrepasadas ·
-                {{ euros(totalSobrepasado) }} de más
+                {{ dinero(totalSobrepasado) }} de más
               </span>
               <span class="aviso-acciones">
                 <button type="button" class="boton-secundario" @click="emit('reasignar', null)">
@@ -855,7 +855,7 @@ const hayCabecera = computed(() => props.mostrarCabecera && !props.anidada)
             <p v-if="cifras.sobreasignado" class="aviso aviso--aviso">
               <CircleAlert :size="16" aria-hidden="true" />
               <span>
-                Has asignado {{ euros(-cifras.sinAsignar) }} más de lo que ingresas
+                Has asignado {{ dinero(-cifras.sinAsignar) }} más de lo que ingresas
               </span>
               <span class="aviso-acciones">
                 <button type="button" class="boton-secundario" @click="emit('reasignar', null)">
@@ -866,7 +866,7 @@ const hayCabecera = computed(() => props.mostrarCabecera && !props.anidada)
             <p v-if="cifras.enRojo" class="aviso aviso--negativo">
               <TriangleAlert :size="16" aria-hidden="true" />
               <span>
-                Este mes gastas {{ euros(cifras.gastado - cifras.ingresos) }} más de lo que ingresas
+                Este mes gastas {{ dinero(cifras.gastado - cifras.ingresos) }} más de lo que ingresas
               </span>
             </p>
           </div>
@@ -887,7 +887,7 @@ const hayCabecera = computed(() => props.mostrarCabecera && !props.anidada)
               <button type="button" class="chip" @click="otrosAbierto = true">
                 <span class="punto punto--cuadrado" :style="{ background: COLOR_OTROS }" aria-hidden="true" />
                 {{ tramoOtros.nombre }}
-                <span class="chip-importe">{{ euros(tramoOtros.importe) }}</span>
+                <span class="chip-importe">{{ dinero(tramoOtros.importe) }}</span>
                 <span class="chip-mas">Ver todas</span>
               </button>
             </li>
@@ -917,14 +917,14 @@ const hayCabecera = computed(() => props.mostrarCabecera && !props.anidada)
                 />
                 <span class="chip-nombre">{{ t.nombre }}</span>
                 <span v-if="t.tipo === 'sin-asignar' || t.tipo === 'en-rojo'" class="chip-importe">
-                  {{ euros(t.importe) }}
+                  {{ dinero(t.importe) }}
                 </span>
                 <span v-else class="chip-importe">
-                  {{ euros(t.gastado, { decimales: false }) }}/{{ euros(t.importe + t.arrastrado, { decimales: false }) }}
+                  {{ dinero(t.gastado, { decimales: false }) }}/{{ dinero(t.importe + t.arrastrado, { decimales: false }) }}
                 </span>
                 <span v-if="t.sobrepaso > 0 && t.tipo === 'categoria'" class="insignia">
                   <TriangleAlert :size="12" aria-hidden="true" />
-                  Sobrepasado {{ euros(t.sobrepaso, { signoSiempre: true }) }}
+                  Sobrepasado {{ dinero(t.sobrepaso, { signoSiempre: true }) }}
                 </span>
                 <span v-if="t.tipo === 'otros'" class="chip-mas">Ver todas</span>
               </button>
@@ -966,10 +966,10 @@ const hayCabecera = computed(() => props.mostrarCabecera && !props.anidada)
                 <span class="punto" :style="{ background: t.color }" aria-hidden="true" />
                 {{ t.nombre }}
               </th>
-              <td class="numerica">{{ euros(t.importe + t.arrastrado) }}</td>
-              <td class="numerica">{{ euros(t.gastado) }}</td>
+              <td class="numerica">{{ dinero(t.importe + t.arrastrado) }}</td>
+              <td class="numerica">{{ dinero(t.gastado) }}</td>
               <td class="numerica" :class="{ 'texto-negativo': t.disponible < 0 }">
-                {{ euros(t.disponible) }}
+                {{ dinero(t.disponible) }}
               </td>
               <td class="numerica">{{ porcentaje(t.anchoPct / 100) }}</td>
             </tr>

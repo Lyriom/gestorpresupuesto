@@ -55,9 +55,9 @@ ALLOW_REGISTRATION=true
 OCR_ENABLED=true
 OCR_LANGUAGES=spa+eng
 MAX_UPLOAD_MB=20
-DEFAULT_CURRENCY=EUR
-DEFAULT_LOCALE=es-ES
-DEFAULT_TIMEZONE=Europe/Madrid
+DEFAULT_CURRENCY=USD
+DEFAULT_LOCALE=es-EC
+DEFAULT_TIMEZONE=America/Guayaquil
 ```
 
 **No copies la cadena de conexión que te da EasyPanel tal cual.** En la ficha del

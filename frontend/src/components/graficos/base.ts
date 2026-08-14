@@ -34,7 +34,7 @@ import {
 } from 'chart.js'
 import { computed, onBeforeUnmount, onMounted, ref, type ComputedRef, type Ref } from 'vue'
 
-import { euros, eurosCompactos } from '@/lib/formato'
+import { dinero, dineroCompacto } from '@/lib/formato'
 
 export { PALETA_CATEGORICA, COLOR_OTROS, colorDeCategoria, tokenDeRanura } from
   '@/components/presupuesto/colores'
@@ -296,7 +296,7 @@ export function opcionesComunes<T extends ChartType = ChartType>(
   config: OpcionesComunes,
 ): ChartOptions<T> {
   const { paleta, movimientoReducido, series, interaccion = 'index' } = config
-  const formatear = config.formatearValor ?? ((valor: number) => euros(valor))
+  const formatear = config.formatearValor ?? ((valor: number) => dinero(valor))
 
   const comunes: ChartOptions<ChartType> = {
     responsive: true,
@@ -378,7 +378,7 @@ export function escalaMonetaria(
       font: FUENTE_EJE,
       padding: 8,
       maxTicksLimit: horizontal ? 6 : 5,
-      callback: (valor) => eurosCompactos(typeof valor === 'number' ? valor : Number(valor)),
+      callback: (valor) => dineroCompacto(typeof valor === 'number' ? valor : Number(valor)),
     },
   }
 }

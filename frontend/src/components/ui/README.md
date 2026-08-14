@@ -11,7 +11,7 @@ Convenciones comunes:
   el componente pone `aria-invalid`, el icono y el `aria-describedby`.
 - Todo lo que tiene valor usa `v-model` (`modelValue` + `update:modelValue`).
 - Las cifras monetarias van en **céntimos enteros** (`number`) y se pintan con
-  `euros()` de `@/lib/formato`. Nunca euros en coma flotante.
+  `dinero()` de `@/lib/formato`. Nunca euros en coma flotante.
 - Los importes de una tabla llevan `data-numeric` o la clase `num`, que aplica
   `tabular-nums` y alineación a la derecha.
 

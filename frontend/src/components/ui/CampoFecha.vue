@@ -2,7 +2,7 @@
 import { computed, nextTick, ref, useId, watch } from 'vue'
 import { onClickOutside } from '@vueuse/core'
 import { Calendar, ChevronLeft, ChevronRight, CircleAlert } from 'lucide-vue-next'
-import { fechaLarga, mesAnyo } from '@/lib/formato'
+import { fechaLarga, localeActual, mesAnyo } from '@/lib/formato'
 
 const props = withDefaults(
   defineProps<{
@@ -98,7 +98,7 @@ function esFinDeSemana(iso: string): boolean {
 function etiquetaDia(iso: string): string {
   const cuantas = props.diasConDatos?.[iso]
   const dia = fechaLarga(iso)
-  const semana = deIso(iso)?.toLocaleDateString('es-ES', { weekday: 'long' }) ?? ''
+  const semana = deIso(iso)?.toLocaleDateString(localeActual(), { weekday: 'long' }) ?? ''
   const cabeza = `${semana}, ${dia}`
   if (!cuantas) return cabeza
   return `${cabeza}, ${cuantas} ${cuantas === 1 ? 'transacción' : 'transacciones'}`

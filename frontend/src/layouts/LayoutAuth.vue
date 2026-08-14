@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { simboloDe } from '@/lib/formato'
 import { Monitor, Moon, Sun } from 'lucide-vue-next'
 import { useTema } from '@/composables/useTema'
 import AvisoFlotante from '@/components/ui/AvisoFlotante.vue'
@@ -16,7 +17,7 @@ const ICONOS = { dark: Moon, light: Sun, sistema: Monitor } as const
   <div class="escena">
     <main class="tarjeta panel">
       <div class="marca">
-        <span class="logo" aria-hidden="true">€</span>
+        <span class="logo" aria-hidden="true">{{ simboloDe() }}</span>
         <span class="nombre">Gestor de presupuesto</span>
       </div>
 

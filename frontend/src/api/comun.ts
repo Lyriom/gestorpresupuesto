@@ -3,7 +3,7 @@
  *
  * Los nombres de campo van **en inglés y en `snake_case`** porque son los que
  * publica `backend/app/schemas/*`: el cable manda (§4 del contrato). La
- * traducción al castellano ocurre en las vistas, con `euros()`, `fechaCorta()` y
+ * traducción al castellano ocurre en las vistas, con `dinero()`, `fechaCorta()` y
  * el microcopy de `docs/ux/flujos-y-wireframes.md`.
  *
  * Esta capa es fina a propósito: monta la URL, tipa la respuesta y nada más. Ni

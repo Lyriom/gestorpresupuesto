@@ -34,7 +34,7 @@ import EsqueletoCarga from '@/components/ui/EsqueletoCarga.vue'
 import IndicadorProgreso from '@/components/ui/IndicadorProgreso.vue'
 import SelectorBase from '@/components/ui/SelectorBase.vue'
 import { useAvisos } from '@/composables/useAvisos'
-import { euros, porcentaje, precioUnitario } from '@/lib/formato'
+import { dinero, porcentaje, precioUnitario , simboloDe } from '@/lib/formato'
 import { useCategorias } from '@/stores/categorias'
 import { useCuentas } from '@/stores/cuentas'
 import { motivoDeRevision, useFacturas, type LineaBorrador } from '@/stores/facturas'
@@ -266,7 +266,7 @@ onBeforeUnmount(() => facturas.detenerSondeo())
       <div v-if="!facturas.cuadra && facturas.borrador.length > 0" class="banda banda--aviso">
         <TriangleAlert :size="16" aria-hidden="true" />
         El total no coincide con la suma de las líneas. Diferencia de
-        {{ euros(Math.abs(facturas.diferencia)) }}.
+        {{ dinero(Math.abs(facturas.diferencia)) }}.
       </div>
       <div v-if="facturas.lineasDeConfianzaBaja.length > 0" class="banda banda--aviso">
         <TriangleAlert :size="16" aria-hidden="true" />
@@ -393,7 +393,7 @@ onBeforeUnmount(() => facturas.detenerSondeo())
                       :model-value="linea.unit_price ?? ''"
                       etiqueta="Precio unitario"
                       etiqueta-oculta
-                      sufijo="€"
+                      :sufijo="simboloDe()"
                       @update:model-value="editar(linea, { unit_price: $event || null })"
                     />
                   </td>
@@ -455,10 +455,10 @@ onBeforeUnmount(() => facturas.detenerSondeo())
             Añadir línea manual
           </BotonBase>
           <p class="sumas num" :class="{ mal: !facturas.cuadra }">
-            Suma de líneas {{ euros(facturas.sumaLineas) }} · Total de la factura
-            {{ euros(facturas.totalFactura) }}
+            Suma de líneas {{ dinero(facturas.sumaLineas) }} · Total de la factura
+            {{ dinero(facturas.totalFactura) }}
             <template v-if="!facturas.cuadra">
-              · Diferencia {{ euros(Math.abs(facturas.diferencia)) }}
+              · Diferencia {{ dinero(Math.abs(facturas.diferencia)) }}
             </template>
           </p>
         </div>

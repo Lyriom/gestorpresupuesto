@@ -56,7 +56,7 @@ from app.schemas.alerta import (
     TipoAlerta,
 )
 from app.schemas.comun import Pagina, ResultadoLoteRespuesta
-from app.services.formato import CENTIMO, cuantizar, euros, porcentaje
+from app.services.formato import CENTIMO, cuantizar, dinero, porcentaje
 
 router = APIRouter(dependencies=[Depends(verificar_csrf)])
 
@@ -471,14 +471,14 @@ async def recalcular(
                 tipo, severidad = "budget_overspend", "critical"
                 titulo = f"Te has pasado en {arbol[category_id].name}"
                 cuerpo = (
-                    f"Llevas {euros(gasto)} de los {euros(presupuesto)} presupuestados "
+                    f"Llevas {dinero(gasto)} de los {dinero(presupuesto)} presupuestados "
                     f"({porcentaje(gasto / presupuesto)})."
                 )
             elif proporcion >= hogar.near_limit_pct:
                 tipo, severidad = "budget_near_limit", "warning"
                 titulo = f"{arbol[category_id].name} está al límite"
                 cuerpo = (
-                    f"Llevas {euros(gasto)} de {euros(presupuesto)} "
+                    f"Llevas {dinero(gasto)} de {dinero(presupuesto)} "
                     f"({porcentaje(gasto / presupuesto)})."
                 )
             else:
@@ -522,7 +522,7 @@ async def recalcular(
                 severidad="warning",
                 titulo=f"{producto.name} ha subido de precio",
                 cuerpo=(
-                    f"Ahora cuesta {euros(observacion.unit_price)} "
+                    f"Ahora cuesta {dinero(observacion.unit_price)} "
                     f"({porcentaje(cambio / 100)} más)."
                 ),
                 periodo=rango.desde,

@@ -19,7 +19,7 @@ import {
   Wallet,
 } from 'lucide-vue-next'
 
-import { aNumero, etiquetaPeriodo, euros, porcentaje } from '@/lib/formato'
+import { aNumero, etiquetaPeriodo, dinero, porcentaje } from '@/lib/formato'
 import type { ClaveCifra, PresupuestoMes } from './types'
 
 const props = withDefaults(
@@ -61,7 +61,7 @@ const cifras = computed<Cifra[]>(() => {
     {
       clave: 'ingresos',
       etiqueta: 'Ingresos',
-      valor: euros(ingresos, { signoSiempre: true }),
+      valor: dinero(ingresos, { signoSiempre: true }),
       nota: ingresos > 0 ? 'Lo que ha entrado este mes' : 'Todavía sin ingresos registrados',
       tono: 'neutro',
       icono: 'entrada',
@@ -69,7 +69,7 @@ const cifras = computed<Cifra[]>(() => {
     {
       clave: 'asignado',
       etiqueta: 'Asignado',
-      valor: euros(asignado),
+      valor: dinero(asignado),
       nota:
         ingresos > 0
           ? `${porcentaje(pctAsignado / 100)} de los ingresos`
@@ -80,7 +80,7 @@ const cifras = computed<Cifra[]>(() => {
     {
       clave: 'gastado',
       etiqueta: 'Gastado',
-      valor: gastado > 0 ? `-${euros(gastado)}` : euros(gastado),
+      valor: gastado > 0 ? `-${dinero(gastado)}` : dinero(gastado),
       nota: `${porcentaje(pctGastado / 100)} de la barra`,
       tono: 'neutro',
       icono: 'salida',
@@ -88,7 +88,7 @@ const cifras = computed<Cifra[]>(() => {
     {
       clave: 'disponible',
       etiqueta: 'Disponible',
-      valor: euros(disponible),
+      valor: dinero(disponible),
       nota:
         disponible < 0
           ? 'Has gastado más de lo que tenías'
@@ -99,7 +99,7 @@ const cifras = computed<Cifra[]>(() => {
     {
       clave: 'sinAsignar',
       etiqueta: 'Sin asignar',
-      valor: euros(sinAsignar),
+      valor: dinero(sinAsignar),
       nota:
         sinAsignar < 0
           ? 'Sobreasignado: repartido más de lo que entra'
@@ -116,7 +116,7 @@ const cifras = computed<Cifra[]>(() => {
     lista.push({
       clave: 'arrastrado',
       etiqueta: 'Arrastrado',
-      valor: euros(arrastrado),
+      valor: dinero(arrastrado),
       nota: 'Viene del mes anterior',
       tono: 'neutro',
       icono: null,

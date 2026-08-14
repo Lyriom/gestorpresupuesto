@@ -19,7 +19,7 @@ import {
   type UsuarioActualizar,
   type Yo,
 } from '@/api/auth'
-import { periodoDe } from '@/lib/formato'
+import { configurarFormato, periodoDe } from '@/lib/formato'
 import { erroresPorCampo, mensajeDeError } from './comun'
 
 export const useSesion = defineStore('sesion', () => {
@@ -75,13 +75,19 @@ export const useSesion = defineStore('sesion', () => {
         app_name: 'Gestor de presupuesto',
         allow_registration: true,
         first_run: false,
-        default_currency: 'EUR',
-        default_locale: 'es-ES',
+        default_currency: 'USD',
+        default_locale: 'es-EC',
         max_upload_mb: 10,
         max_pdf_pages: 20,
         ocr_enabled: false,
       }
     }
+    // Ya se puede formatear con el idioma y la moneda de la instalación. Hace
+    // falta antes de la sesión: la pantalla de entrada también lleva el símbolo.
+    configurarFormato({
+      locale: meta.value.default_locale,
+      moneda: meta.value.default_currency,
+    })
   }
 
   /** Comprueba si hay sesión. No lanza: devuelve si la hay o no. */
@@ -89,6 +95,7 @@ export const useSesion = defineStore('sesion', () => {
     cargando.value = true
     try {
       usuario.value = await apiAuth.yo()
+      aplicarFormatoDelUsuario()
       return true
     } catch {
       usuario.value = null
@@ -97,6 +104,20 @@ export const useSesion = defineStore('sesion', () => {
       comprobada.value = true
       cargando.value = false
     }
+  }
+
+  /**
+   * Lo del usuario manda sobre lo de la instalación.
+   *
+   * La moneda viene del hogar y el idioma del perfil, así que quien tenga el
+   * hogar en dólares ve dólares aunque el servidor arrancase con otra cosa.
+   */
+  function aplicarFormatoDelUsuario(): void {
+    if (!usuario.value) return
+    configurarFormato({
+      locale: usuario.value.locale || undefined,
+      moneda: usuario.value.currency || undefined,
+    })
   }
 
   async function entrar(credenciales: LoginCrear): Promise<boolean> {
@@ -179,6 +200,7 @@ export const useSesion = defineStore('sesion', () => {
     try {
       const actualizado = await apiAuth.actualizarPerfil(cambios)
       if (usuario.value) usuario.value = { ...usuario.value, ...actualizado }
+      aplicarFormatoDelUsuario()
       return true
     } catch (e) {
       error.value = mensajeDeError(e, 'No se han podido guardar los cambios.')

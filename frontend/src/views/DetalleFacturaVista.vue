@@ -21,7 +21,7 @@ import EsqueletoCarga from '@/components/ui/EsqueletoCarga.vue'
 import EtiquetaCategoria from '@/components/ui/EtiquetaCategoria.vue'
 import ModalBase from '@/components/ui/ModalBase.vue'
 import { useAvisos } from '@/composables/useAvisos'
-import { cantidad, euros, fechaCorta, porcentaje, precioUnitario } from '@/lib/formato'
+import { cantidad, dinero, fechaCorta, porcentaje, precioUnitario } from '@/lib/formato'
 import { ranuraDeCategoria } from '@/stores/categorias'
 import { useFacturas } from '@/stores/facturas'
 import BloqueError from './componentes/BloqueError.vue'
@@ -103,15 +103,15 @@ onMounted(() => void cargar())
         <dl class="importes num">
           <div>
             <dt>Base imponible</dt>
-            <dd>{{ euros(factura.taxable_base) }}</dd>
+            <dd>{{ dinero(factura.taxable_base) }}</dd>
           </div>
           <div>
             <dt>Impuestos</dt>
-            <dd>{{ euros(factura.tax_amount) }}</dd>
+            <dd>{{ dinero(factura.tax_amount) }}</dd>
           </div>
           <div>
             <dt>Total</dt>
-            <dd class="grande">{{ euros(factura.total) }}</dd>
+            <dd class="grande">{{ dinero(factura.total) }}</dd>
           </div>
         </dl>
       </section>
@@ -137,7 +137,7 @@ onMounted(() => void cargar())
                 <td class="num-col num">{{ cantidad(l.quantity) }}</td>
                 <td>{{ l.unit ?? '—' }}</td>
                 <td class="num-col num">{{ precioUnitario(l.unit_price) }}</td>
-                <td class="num-col num">{{ euros(l.total) }}</td>
+                <td class="num-col num">{{ dinero(l.total) }}</td>
                 <td>
                   <EtiquetaCategoria
                     v-if="l.category"
@@ -158,7 +158,7 @@ onMounted(() => void cargar())
         <p v-if="movimiento" class="movimiento">
           {{ fechaCorta(movimiento.date) }} ·
           {{ movimiento.description || movimiento.payee?.name || 'Sin concepto' }} ·
-          <span class="num">{{ euros(movimiento.signed_amount, { signoSiempre: true }) }}</span>
+          <span class="num">{{ dinero(movimiento.signed_amount, { signoSiempre: true }) }}</span>
           <BotonBase
             variante="enlace"
             tamanyo="sm"

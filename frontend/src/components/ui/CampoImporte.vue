@@ -1,24 +1,42 @@
 <script setup lang="ts">
 import { computed, ref, useId, watch } from 'vue'
 import { CircleAlert } from 'lucide-vue-next'
-import { euros, parsearImporte } from '@/lib/formato'
+import {
+  dinero,
+  dineroHablado,
+  localeActual,
+  nombreMoneda,
+  parsearImporte,
+  simboloDe,
+} from '@/lib/formato'
 
-/** 999.999,99 € expresados en céntimos, el tope del §5.5. */
+/** 999.999,99 expresados en céntimos, el tope del §5.5. */
 const MAX_CENTIMOS = 99_999_999
 
 /**
- * El € es un sufijo fijo FUERA del área de texto, así que `euros()` de
- * formato.ts no sirve para pintar el interior del campo: haría falta quitarle
- * el símbolo a posteriori. Este formateador da solo la cifra `1.234,56`.
+ * El símbolo de la moneda es un sufijo fijo FUERA del área de texto, así que
+ * `dinero()` de formato.ts no sirve para pintar el interior del campo: haría
+ * falta quitarle el símbolo a posteriori. Este formateador da solo la cifra
+ * `1.234,56`. Se construye a la primera y no al cargar el módulo, porque el
+ * idioma se conoce cuando responde `/meta`.
  */
-const fmtCampo = new Intl.NumberFormat('es-ES', {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-})
+let fmtCampo: Intl.NumberFormat | null = null
+let localeDelFormateador = ''
+
+function formateadorCampo(): Intl.NumberFormat {
+  if (!fmtCampo || localeDelFormateador !== localeActual()) {
+    localeDelFormateador = localeActual()
+    fmtCampo = new Intl.NumberFormat(localeDelFormateador, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
+  }
+  return fmtCampo
+}
 
 const props = withDefaults(
   defineProps<{
-    /** Céntimos enteros. Nunca euros en coma flotante. */
+    /** Céntimos enteros. Nunca importes en coma flotante. */
     modelValue: number | null
     etiqueta?: string
     ayuda?: string
@@ -31,7 +49,7 @@ const props = withDefaults(
     tamanyo?: 'cuerpo' | 'display'
     /** Fila de teclas `+10 +50 +100 C`. */
     teclasRapidas?: boolean
-    /** Tope en céntimos; por defecto 999.999,99 €. */
+    /** Tope en céntimos; por defecto 999.999,99. */
     maximo?: number
   }>(),
   { etiqueta: 'Importe', tamanyo: 'cuerpo' },
@@ -43,6 +61,10 @@ const base = useId()
 const idCampo = `${base}-campo`
 const idAyuda = `${base}-ayuda`
 const campo = ref<HTMLInputElement | null>(null)
+
+/** El símbolo se pinta y el nombre se lee: uno es visual y el otro para el lector. */
+const simbolo = computed(() => simboloDe())
+const moneda = computed(() => nombreMoneda())
 
 const texto = ref('')
 const enfocado = ref(false)
@@ -111,13 +133,13 @@ function posicionTras(s: string, cuantos: number): number {
 
 function fijarCentimos(centimos: number): void {
   if (centimos > tope.value) {
-    errorInterno.value = `El importe no puede pasar de ${euros(tope.value / 100)}.`
+    errorInterno.value = `El importe no puede pasar de ${dinero(tope.value / 100)}.`
     emit('update:modelValue', null)
     return
   }
   errorInterno.value = null
-  texto.value = fmtCampo.format(centimos / 100)
-  anuncio.value = `${texto.value} euros`
+  texto.value = formateadorCampo().format(centimos / 100)
+  anuncio.value = dineroHablado(centimos / 100)
   emit('update:modelValue', centimos)
 }
 
@@ -204,7 +226,7 @@ watch(
   () => props.modelValue,
   (valor) => {
     if (enfocado.value) return
-    texto.value = valor === null || valor === undefined ? '' : fmtCampo.format(valor / 100)
+    texto.value = valor === null || valor === undefined ? '' : formateadorCampo().format(valor / 100)
   },
   { immediate: true },
 )
@@ -215,12 +237,12 @@ defineExpose({ enfocar: () => campo.value?.focus() })
 <template>
   <div class="campo">
     <label :for="idCampo" :class="{ 'oculto-visualmente': etiquetaOculta }">
-      {{ etiqueta }}<span class="oculto-visualmente"> en euros</span>
+      {{ etiqueta }}<span class="oculto-visualmente"> en {{ moneda }}</span>
       <span v-if="requerido" class="requerido" aria-hidden="true"> *</span>
     </label>
 
     <p v-if="soloLectura" class="lectura num" :class="{ grande: tamanyo === 'display' }">
-      {{ modelValue === null ? '—' : euros(modelValue / 100) }}
+      {{ modelValue === null ? '—' : dinero(modelValue / 100) }}
     </p>
 
     <div
@@ -249,7 +271,7 @@ defineExpose({ enfocar: () => campo.value?.focus() })
         @focus="enfocado = true"
         @blur="alSalir"
       />
-      <span class="moneda" aria-hidden="true">€</span>
+      <span class="moneda" aria-hidden="true">{{ simbolo }}</span>
     </div>
 
     <div v-if="teclasRapidas && !soloLectura" class="rapidas">

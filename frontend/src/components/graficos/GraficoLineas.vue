@@ -10,7 +10,7 @@ import { computed, ref } from 'vue'
 import { Line } from 'vue-chartjs'
 import type { ChartData, ChartOptions, Plugin } from 'chart.js'
 
-import { euros } from '@/lib/formato'
+import { dinero } from '@/lib/formato'
 import MarcoGrafico from './MarcoGrafico.vue'
 import {
   colorDeSerie,
@@ -51,7 +51,7 @@ const { paleta, movimientoReducido } = usarPaleta(raiz)
 
 /** Los precios unitarios llevan su unidad pegada al importe. */
 function formatear(valor: number): string {
-  return props.unidad ? `${euros(valor)}/${props.unidad}` : euros(valor)
+  return props.unidad ? `${dinero(valor)}/${props.unidad}` : dinero(valor)
 }
 
 const coloresSerie = computed(() =>

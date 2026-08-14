@@ -14,7 +14,7 @@
 import { computed } from 'vue'
 import { CirclePlus, TriangleAlert } from 'lucide-vue-next'
 
-import { aNumero, euros, porcentaje } from '@/lib/formato'
+import { aNumero, dinero, porcentaje } from '@/lib/formato'
 import { colorDeCategoria } from './colores'
 import { ETIQUETA_ESTADO, type AsignacionTematica } from './types'
 
@@ -72,17 +72,17 @@ const etiquetaInteractiva = computed(() => (props.href ? 'a' : 'button'))
 
 const textoImportes = computed(() =>
   sinAsignacion.value
-    ? `${euros(gastado.value)} · sin asignación`
-    : `${euros(gastado.value)} / ${euros(efectivo.value)}`,
+    ? `${dinero(gastado.value)} · sin asignación`
+    : `${dinero(gastado.value)} / ${dinero(efectivo.value)}`,
 )
 
 const descripcion = computed(() => {
   if (sinAsignacion.value) {
-    return `${nombre.value}: ${euros(gastado.value)} gastados sin presupuesto asignado.`
+    return `${nombre.value}: ${dinero(gastado.value)} gastados sin presupuesto asignado.`
   }
-  const base = `${nombre.value}: ${euros(gastado.value)} gastados de ${euros(efectivo.value)}, ${porcentaje(consumido.value / 100)}`
+  const base = `${nombre.value}: ${dinero(gastado.value)} gastados de ${dinero(efectivo.value)}, ${porcentaje(consumido.value / 100)}`
   return sobrepasado.value
-    ? `${base}. Sobrepasada en ${euros(sobrepaso.value)}.`
+    ? `${base}. Sobrepasada en ${dinero(sobrepaso.value)}.`
     : `${base}.`
 })
 </script>
@@ -131,10 +131,10 @@ const descripcion = computed(() => {
     <div class="pie">
       <p v-if="sobrepasado" class="aviso">
         <TriangleAlert :size="14" aria-hidden="true" />
-        <span>{{ euros(sobrepaso, { signoSiempre: true }) }} de más</span>
+        <span>{{ dinero(sobrepaso, { signoSiempre: true }) }} de más</span>
       </p>
       <p v-else-if="arrastrado !== 0" class="nota">
-        Incluye {{ euros(arrastrado) }} arrastrados del mes anterior
+        Incluye {{ dinero(arrastrado) }} arrastrados del mes anterior
       </p>
       <button v-if="sinAsignacion" type="button" class="asignar" @click="emit('asignar', props.asignacion)">
         <CirclePlus :size="14" aria-hidden="true" />

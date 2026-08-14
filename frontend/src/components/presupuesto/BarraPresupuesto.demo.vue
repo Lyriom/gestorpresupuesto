@@ -9,13 +9,13 @@
  * `crearBarra` reproduce el cálculo de `services/presupuesto.py` (estados,
  * porcentajes, orden y avisos) para que los datos de ejemplo sean exactamente
  * de la forma que llega de la API, incluidos los importes como cadena decimal.
- * Los avisos aquí se escriben con `euros()`; el backend interpola el Decimal en
+ * Los avisos aquí se escriben con `dinero()`; el backend interpola el Decimal en
  * bruto, así que en producción se verán con punto decimal hasta que se arregle
  * allí.
  */
 import { computed, ref, watch } from 'vue'
 
-import { euros, periodoDe } from '@/lib/formato'
+import { dinero, periodoDe } from '@/lib/formato'
 import BarraPresupuesto from './BarraPresupuesto.vue'
 import BarraCategoria from './BarraCategoria.vue'
 import ResumenPresupuesto from './ResumenPresupuesto.vue'
@@ -89,18 +89,18 @@ function crearBarra(ingresos: number, entradas: EntradaDemo[], periodo = PERIODO
       'No has registrado ingresos este mes: añade tu nómina o ingresos para poder repartir el presupuesto.',
     )
   } else if (sinAsignar < 0) {
-    warnings.push(`Has repartido ${euros(-sinAsignar)} más de lo que has ingresado este mes.`)
+    warnings.push(`Has repartido ${dinero(-sinAsignar)} más de lo que has ingresado este mes.`)
   }
 
   const sobrepasadas = allocations.filter((a) => a.state === 'sobrepasado')
   if (sobrepasadas.length === 1) {
     warnings.push(
-      `Te has pasado ${euros(sobrepasadas[0].overspent)} en ${sobrepasadas[0].category.name}.`,
+      `Te has pasado ${dinero(sobrepasadas[0].overspent)} en ${sobrepasadas[0].category.name}.`,
     )
   } else if (sobrepasadas.length > 1) {
     const total = sobrepasadas.reduce((t, a) => t + Number(a.overspent), 0)
     warnings.push(
-      `Te has pasado del presupuesto en ${sobrepasadas.length} temáticas (${euros(total)} en total).`,
+      `Te has pasado del presupuesto en ${sobrepasadas.length} temáticas (${dinero(total)} en total).`,
     )
   }
 

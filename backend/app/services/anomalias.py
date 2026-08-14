@@ -47,7 +47,7 @@ from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 
-from app.services.formato import CERO, cuantizar, euros, numero
+from app.services.formato import CERO, cuantizar, dinero, numero
 
 #: Escala con la que se publican el z y el «cuántas veces». No son dinero —de ahí
 #: que no pasen por `cuantizar()`—, pero el modo de redondeo se fija igualmente:
@@ -285,25 +285,25 @@ def explicar(importe: Decimal, referencia: Referencia) -> str:
     aviso es un error suyo, un error del comercio o un gasto que sí quería hacer.
     """
     cabeza = (
-        f"En {referencia.grupo.nombre} el gasto suele rondar los {euros(referencia.mediana)} "
-        f"y esta vez han sido {euros(importe)}"
+        f"En {referencia.grupo.nombre} el gasto suele rondar los {dinero(referencia.mediana)} "
+        f"y esta vez han sido {dinero(importe)}"
     )
     if referencia.mediana > 0:
         veces = importe / referencia.mediana
         if veces >= 2:
             cola = f"{numero(veces, 1)} veces lo habitual"
         else:
-            cola = f"{euros(importe - referencia.mediana)} más de lo habitual"
+            cola = f"{dinero(importe - referencia.mediana)} más de lo habitual"
     else:
-        cola = f"{euros(importe)} más de lo habitual"
+        cola = f"{dinero(importe)} más de lo habitual"
     # Se dan las dos cifras a propósito: la mediana es con la que se ha decidido y
     # la media es la que el usuario espera ver, así que si se separan mucho ya sabe
     # que en ese grupo hay algún gasto extremo más.
     return (
         f"{cabeza}: {cola}. "
         f"La referencia son {referencia.observaciones} gastos anteriores, "
-        f"con una media de {euros(referencia.media)} y un máximo de "
-        f"{euros(referencia.maximo)}."
+        f"con una media de {dinero(referencia.media)} y un máximo de "
+        f"{dinero(referencia.maximo)}."
     )
 
 

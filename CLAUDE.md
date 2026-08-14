@@ -37,8 +37,12 @@ en la raíz (copia de `.env.example`) con `SECRET_KEY` y `DATABASE_URL`.
   unitarios (las facturas de luz y gas traen cuatro o seis decimales). Nunca
   `float`. En JSON los importes viajan **como cadena decimal**, no como número.
 - **Idioma**: código, nombres de tabla, columnas y rutas en inglés; comentarios,
-  docstrings, mensajes de error y todo el texto visible al usuario en español de
-  España. La interfaz usa `es-ES` y euros.
+  docstrings, mensajes de error y todo el texto visible al usuario en español.
+- **Moneda e idioma de la interfaz**: **no se escriben en el código**. Salen de
+  `DEFAULT_CURRENCY` y `DEFAULT_LOCALE`, y la moneda de cada hogar manda sobre
+  la de la instalación. Por defecto, dólares y `es-EC`. En el frontend se pinta
+  siempre con `dinero()` o `simboloDe()` de `lib/formato.ts`, nunca con un `€` ni
+  un `$` a mano; en el backend con `formato.dinero()`.
 - **Errores de la API**: siempre con la forma
   `{"error": {"codigo", "mensaje", "detalles": [{"campo", "mensaje"}]}}`.
   Las excepciones de negocio están en `app/core/errors.py`.
@@ -58,7 +62,7 @@ backend/app/models/      modelos SQLAlchemy (39 tablas)
 backend/app/schemas/     esquemas Pydantic v2
 backend/app/services/    lógica de negocio, sin dependencias del ORM
 backend/app/api/v1/      routers por recurso
-frontend/src/lib/        cliente HTTP y formateo es-ES
+frontend/src/lib/        cliente HTTP y formateo (idioma y moneda configurables)
 frontend/src/components/ui/           componentes base
 frontend/src/components/presupuesto/  la barra de presupuesto
 frontend/src/components/graficos/     envoltorios de Chart.js
@@ -87,8 +91,11 @@ Antes de implementar algo nuevo, mira si ya está especificado:
 ## Detalles que ya han dado problemas
 
 - En las facturas españolas la **coma siempre es decimal**: `0,004` son cuatro
-  milésimas, no cuatro euros. `app/services/numeros.py` lo resuelve; no lo
-  reimplementes.
+  milésimas, no cuatro. `app/services/numeros.py` lo resuelve; no lo
+  reimplementes. También lee el formato americano (`1,234.56`), que es el que
+  usan muchas facturas ecuatorianas, porque decide por la posición del último
+  separador. El único caso que se queda ambiguo es `1,234` a secas, sin
+  decimales, que se lee a la española.
 - El **precio unitario no se redondea a céntimos** al leer una factura: se
   perdería el histórico de luz y gas.
 - Para detectar el delimitador de un CSV **no uses `csv.Sniffer`**: confunde la

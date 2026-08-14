@@ -52,7 +52,7 @@ from app.models.recurrente import RecurringOccurrence, RecurringRule
 from app.models.transaccion import Transaction, TransactionSplit
 from app.models.usuario import User
 from app.services.extraccion_pdf import LineaExtraida
-from app.services.formato import euros
+from app.services.formato import dinero
 from app.services.numeros import parsear_importe
 
 # Las fixtures del módulo base se reexportan por asignación, como hacen el resto
@@ -488,8 +488,8 @@ def test_el_importe_de_una_factura_redondea_al_alza_en_el_empate() -> None:
 
 def test_el_texto_de_un_importe_redondea_al_alza() -> None:
     """Es el número que el usuario lee en un aviso de presupuesto."""
-    assert euros(Decimal("2.665")) == "2,67 €"
-    assert euros(Decimal("-2.665")) == "-2,67 €"
+    assert dinero(Decimal("2.665"), moneda="EUR") == "2,67 €"
+    assert dinero(Decimal("-2.665"), moneda="EUR") == "-2,67 €"
 
 
 def test_el_total_de_una_linea_de_factura_redondea_al_alza() -> None:

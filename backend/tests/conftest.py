@@ -13,6 +13,23 @@ os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 import pymupdf  # noqa: E402
 import pytest  # noqa: E402
 
+from app.core.config import settings  # noqa: E402
+from app.services import formato  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _moneda_de_la_instalacion():
+    """Deja la moneda de los textos como está configurada, antes y después.
+
+    `formato.fijar_moneda()` guarda la moneda en una variable de módulo, que es lo
+    correcto para un proceso servidor pero se filtra entre pruebas: una que la
+    cambie para comprobar el formato en euros hacía fallar a las siguientes de
+    otro fichero, y solo al ejecutar la batería entera, nunca la prueba sola.
+    """
+    formato.fijar_moneda(settings.default_currency)
+    yield
+    formato.fijar_moneda(settings.default_currency)
+
 
 def _pdf_desde_lineas(
     lineas: list[tuple[float, float, str]],

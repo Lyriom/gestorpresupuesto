@@ -17,7 +17,7 @@ import CampoImporte from '@/components/ui/CampoImporte.vue'
 import EtiquetaCategoria from '@/components/ui/EtiquetaCategoria.vue'
 import ModalBase from '@/components/ui/ModalBase.vue'
 import PistaAyuda from '@/components/ui/PistaAyuda.vue'
-import { aNumero, etiquetaPeriodo, euros } from '@/lib/formato'
+import { aNumero, etiquetaPeriodo, dinero } from '@/lib/formato'
 import { ranuraDeCategoria } from '@/stores/categorias'
 import { usePresupuesto } from '@/stores/presupuesto'
 
@@ -51,7 +51,7 @@ function errorDe(categoryId: string): string | undefined {
   const minimo = minimoDe(categoryId)
   const valor = valores.value[categoryId] ?? 0
   if (minimo > 0 && valor < minimo) {
-    return `No puedes bajar de ${euros(minimo / 100)}: ya lo has gastado.`
+    return `No puedes bajar de ${dinero(minimo / 100)}: ya lo has gastado.`
   }
   return undefined
 }
@@ -117,7 +117,7 @@ watch(
             <Lock :size="14" aria-hidden="true" />
           </PistaAyuda>
         </span>
-        <span class="gastado num">{{ euros(a.spent) }} gastados</span>
+        <span class="gastado num">{{ dinero(a.spent) }} gastados</span>
         <CampoImporte
           :model-value="valores[a.category_id] ?? null"
           :etiqueta="`Asignado a ${a.category.name}`"
@@ -135,7 +135,7 @@ watch(
 
     <template #pie>
       <p class="contador num" :class="{ mal: sobreasignado }" role="status">
-        Sin asignar <strong>{{ euros(sinAsignar / 100) }}</strong>
+        Sin asignar <strong>{{ dinero(sinAsignar / 100) }}</strong>
         <span v-if="sobreasignado"> · has repartido más de lo que ingresas</span>
       </p>
       <BotonBase variante="contorno" @click="emit('update:abierto', false)">Cancelar</BotonBase>

@@ -18,6 +18,7 @@ from starlette.responses import Response
 from app.api.v1 import api_router
 from app.core.config import settings
 from app.core.errors import registrar_manejadores
+from app.services import formato
 
 logging.basicConfig(
     level=logging.INFO if settings.is_production else logging.DEBUG,
@@ -35,7 +36,17 @@ mimetypes.add_type("application/manifest+json", ".webmanifest")
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Arranque y apagado ordenado del proceso."""
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
-    logger.info("%s arrancando en modo %s", settings.app_name, settings.app_env)
+    # Los textos que redacta el servidor (avisos del presupuesto, alertas de
+    # precio) llevan el símbolo de la moneda. `services/` no importa la
+    # configuración por norma, así que se le pasa aquí, una vez.
+    formato.fijar_moneda(settings.default_currency)
+    logger.info(
+        "%s arrancando en modo %s (%s, %s)",
+        settings.app_name,
+        settings.app_env,
+        settings.default_currency,
+        settings.default_locale,
+    )
     yield
     from app.db.session import dispose_engine
 

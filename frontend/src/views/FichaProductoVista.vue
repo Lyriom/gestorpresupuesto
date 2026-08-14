@@ -19,7 +19,7 @@ import BotonBase from '@/components/ui/BotonBase.vue'
 import EsqueletoCarga from '@/components/ui/EsqueletoCarga.vue'
 import EstadoVacio from '@/components/ui/EstadoVacio.vue'
 import { ETIQUETA_TENDENCIA } from '@/api/productos'
-import { aNumero, cantidad, euros, fechaCorta, porcentaje, precioUnitario } from '@/lib/formato'
+import { aNumero, cantidad, dinero, fechaCorta, porcentaje, precioUnitario } from '@/lib/formato'
 import { useProductos } from '@/stores/productos'
 import BloqueError from './componentes/BloqueError.vue'
 
@@ -126,7 +126,7 @@ onBeforeUnmount(() => productos.limpiarFicha())
               <span class="oculto">{{ variacionPrecio.sube ? 'Ha subido' : 'Ha bajado' }}</span>
               {{ variacionPrecio.sube ? '+' : '' }}{{ porcentaje(variacionPrecio.pct / 100) }}
               <span v-if="variacionPrecio.diferencia !== null" class="unidad">
-                {{ euros(variacionPrecio.diferencia, { signoSiempre: true }) }}
+                {{ dinero(variacionPrecio.diferencia, { signoSiempre: true }) }}
               </span>
               <span v-if="variacionPrecio.desde" class="unidad">
                 desde {{ fechaCorta(variacionPrecio.desde) }}
@@ -189,7 +189,7 @@ onBeforeUnmount(() => productos.limpiarFicha())
         />
 
         <p v-if="ahorro" class="tarjeta caja ahorro num">
-          Ahorras {{ euros(ahorro.diferencia) }}<template v-if="unidad">/{{ unidad }}</template>
+          Ahorras {{ dinero(ahorro.diferencia) }}<template v-if="unidad">/{{ unidad }}</template>
           comprando en {{ ahorro.comercio }} (un {{ porcentaje(ahorro.proporcion) }} menos).
         </p>
 
@@ -215,7 +215,7 @@ onBeforeUnmount(() => productos.limpiarFicha())
                   <td>{{ p.payee?.name ?? '—' }}</td>
                   <td class="num-col num">{{ cantidad(p.quantity, p.unit) }}</td>
                   <td class="num-col num">{{ precioUnitario(p.unit_price) }}</td>
-                  <td class="num-col num">{{ p.total ? euros(p.total) : '—' }}</td>
+                  <td class="num-col num">{{ p.total ? dinero(p.total) : '—' }}</td>
                   <td>
                     <BotonBase
                       v-if="p.invoice_id"

@@ -19,7 +19,7 @@ import {
 import BotonBase from '@/components/ui/BotonBase.vue'
 import EsqueletoCarga from '@/components/ui/EsqueletoCarga.vue'
 import EstadoVacio from '@/components/ui/EstadoVacio.vue'
-import { euros, fechaCorta, porcentaje } from '@/lib/formato'
+import { dinero, fechaCorta, porcentaje } from '@/lib/formato'
 import { useFacturas } from '@/stores/facturas'
 import { useSesion } from '@/stores/sesion'
 import BloqueError from './componentes/BloqueError.vue'
@@ -150,7 +150,7 @@ onMounted(() => {
         <li v-for="f in facturas.items" :key="f.id">
           <span class="fecha">{{ fechaCorta(f.date ?? f.uploaded_at) }}</span>
           <span class="emisor">{{ f.issuer || f.filename }}</span>
-          <span class="importe num">{{ f.total ? euros(f.total) : '—' }}</span>
+          <span class="importe num">{{ f.total ? dinero(f.total) : '—' }}</span>
           <span class="estado" :class="`estado--${f.status}`">
             {{ ETIQUETA_ESTADO_FACTURA[f.status] }}
           </span>

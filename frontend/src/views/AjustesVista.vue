@@ -19,7 +19,7 @@ import ModalBase from '@/components/ui/ModalBase.vue'
 import SelectorBase from '@/components/ui/SelectorBase.vue'
 import { useAvisos } from '@/composables/useAvisos'
 import { useTema, type PreferenciaTema } from '@/composables/useTema'
-import { porcentaje, tiempoRelativo } from '@/lib/formato'
+import { configurarFormato, nombreMoneda, porcentaje, tiempoRelativo } from '@/lib/formato'
 import { SECCIONES_AJUSTES, useAjustes, type SeccionAjustes } from '@/stores/ajustes'
 import { mensajeDeError } from '@/stores/comun'
 import { useSesion } from '@/stores/sesion'
@@ -75,6 +75,25 @@ async function borrarCuenta(): Promise<void> {
   } finally {
     borrando.value = false
   }
+}
+
+/**
+ * Las monedas que sabe escribir el backend (`services/formato.py`). La etiqueta
+ * la pone `Intl` con el nombre en el idioma en uso, para no escribir a mano
+ * «dólar estadounidense» y que luego no cuadre con lo que pinta la interfaz.
+ */
+const opcionesMoneda = ['USD', 'EUR', 'GBP', 'MXN', 'COP', 'ARS', 'CLP', 'PEN'].map(
+  (codigo) => ({ valor: codigo, etiqueta: `${codigo} — ${nombreMoneda(codigo)}` }),
+)
+
+/**
+ * Cambiar la moneda tiene que verse **en el momento**, sin recargar: el símbolo
+ * está en cada importe de cada pantalla. Se guarda y se reconfigura el formateo.
+ */
+async function cambiarMoneda(codigo: string): Promise<void> {
+  if (!(await ajustes.guardar({ currency: codigo }))) return
+  configurarFormato({ moneda: codigo })
+  avisos.exito(`Moneda cambiada a ${nombreMoneda(codigo)}.`)
 }
 
 const opcionesArrastre = [
@@ -213,6 +232,13 @@ watch(() => sesion.usuario?.id, volcarPerfil)
             />
 
             <template v-if="ajustes.ajustes">
+              <SelectorBase
+                :model-value="ajustes.ajustes.currency"
+                etiqueta="Moneda"
+                ayuda="Cambia el símbolo de toda la aplicación. No convierte los importes ya guardados."
+                :opciones="opcionesMoneda"
+                @update:model-value="cambiarMoneda(String($event))"
+              />
               <SelectorBase
                 :model-value="ajustes.ajustes.rollover_negative"
                 etiqueta="Qué hacer con el sobregasto al cerrar el mes"

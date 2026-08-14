@@ -12,7 +12,7 @@ import { computed, ref } from 'vue'
 import { Bar } from 'vue-chartjs'
 import type { ChartData, ChartOptions } from 'chart.js'
 
-import { euros } from '@/lib/formato'
+import { dinero } from '@/lib/formato'
 import MarcoGrafico from './MarcoGrafico.vue'
 import {
   colorDeSerie,
@@ -137,7 +137,7 @@ const filas = computed<FilaTabla[]>(() =>
       props.etiquetas[i],
       ...props.series.map((serie) => {
         const valor = serie.datos[i]
-        return typeof valor === 'number' ? euros(valor) : '—'
+        return typeof valor === 'number' ? dinero(valor) : '—'
       }),
     ],
   })),
@@ -149,7 +149,7 @@ const resumenAuto = computed(() => {
   const mayor = orden.value[0]
   const cabeza =
     primera && mayor !== undefined && typeof primera.datos[mayor] === 'number'
-      ? ` El valor más alto es ${props.etiquetas[mayor]}, ${euros(primera.datos[mayor])}.`
+      ? ` El valor más alto es ${props.etiquetas[mayor]}, ${dinero(primera.datos[mayor])}.`
       : ''
   return `${props.titulo ?? 'Gráfico de barras'}: ${props.etiquetas.length} categorías y ${props.series.length} serie(s).${cabeza} Los datos están en la tabla siguiente.`
 })
