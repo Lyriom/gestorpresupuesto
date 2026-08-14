@@ -11,20 +11,32 @@
  * incluye el idioma, para que al cambiarlo no se reutilice el formateador viejo.
  */
 
+import { ref } from 'vue'
+
 /** Lo que se usa hasta que `/meta` responde. Coincide con el valor por defecto del backend. */
 const LOCALE_INICIAL = 'es-EC'
 const MONEDA_INICIAL = 'USD'
 
-let locale = LOCALE_INICIAL
-let monedaPorDefecto = MONEDA_INICIAL
+/**
+ * Son `ref` y no dos variables sueltas **porque la moneda se cambia en marcha**.
+ *
+ * Con una variable normal, cambiarla en Ajustes no repinta nada: Vue no tiene
+ * cómo enterarse. Quedaba la interfaz a medias —el logotipo de la barra con el
+ * euro, los importes ya en dólares— hasta recargar la página, y el símbolo del
+ * campo de importes no cambiaba nunca, porque su `computed` no dependía de nada
+ * y se quedaba con el primer valor calculado. Siendo `ref`, cualquier plantilla
+ * que llame a `dinero()` o a `simboloDe()` se suscribe sola.
+ */
+const locale = ref(LOCALE_INICIAL)
+const monedaPorDefecto = ref(MONEDA_INICIAL)
 
 const cache = new Map<string, Intl.NumberFormat | Intl.DateTimeFormat>()
 
 function memo<T extends Intl.NumberFormat | Intl.DateTimeFormat>(clave: string, crear: () => T): T {
-  let f = cache.get(`${locale}|${clave}`) as T | undefined
+  let f = cache.get(`${locale.value}|${clave}`) as T | undefined
   if (!f) {
     f = crear()
-    cache.set(`${locale}|${clave}`, f)
+    cache.set(`${locale.value}|${clave}`, f)
   }
   return f
 }
@@ -36,25 +48,25 @@ function memo<T extends Intl.NumberFormat | Intl.DateTimeFormat>(clave: string, 
  * moneda del hogar manda sobre la de la instalación.
  */
 export function configurarFormato(opciones: { locale?: string; moneda?: string }): void {
-  const antes = `${locale}|${monedaPorDefecto}`
-  if (opciones.locale) locale = opciones.locale
-  if (opciones.moneda) monedaPorDefecto = opciones.moneda
-  if (`${locale}|${monedaPorDefecto}` !== antes) cache.clear()
+  const antes = `${locale.value}|${monedaPorDefecto.value}`
+  if (opciones.locale) locale.value = opciones.locale
+  if (opciones.moneda) monedaPorDefecto.value = opciones.moneda
+  if (`${locale.value}|${monedaPorDefecto.value}` !== antes) cache.clear()
 }
 
 export function monedaActual(): string {
-  return monedaPorDefecto
+  return monedaPorDefecto.value
 }
 
 export function localeActual(): string {
-  return locale
+  return locale.value
 }
 
 function formateadorMoneda(moneda: string, decimales: boolean): Intl.NumberFormat {
   return memo(
     `moneda:${moneda}:${decimales}`,
     () =>
-      new Intl.NumberFormat(locale, {
+      new Intl.NumberFormat(locale.value, {
         style: 'currency',
         currency: moneda,
         minimumFractionDigits: decimales ? 2 : 0,
@@ -67,7 +79,7 @@ function formateadorPorcentaje(decimales: number): Intl.NumberFormat {
   return memo(
     `pct:${decimales}`,
     () =>
-      new Intl.NumberFormat(locale, {
+      new Intl.NumberFormat(locale.value, {
         style: 'percent',
         minimumFractionDigits: decimales,
         maximumFractionDigits: decimales,
@@ -90,7 +102,7 @@ export function dinero(
   valor: string | number | null | undefined,
   opciones: { decimales?: boolean; moneda?: string; signoSiempre?: boolean } = {},
 ): string {
-  const { decimales = true, moneda = monedaPorDefecto, signoSiempre = false } = opciones
+  const { decimales = true, moneda = monedaPorDefecto.value, signoSiempre = false } = opciones
   const n = aNumero(valor)
   const texto = formateadorMoneda(moneda, decimales).format(n)
   return signoSiempre && n > 0 ? `+${texto}` : texto
@@ -99,13 +111,13 @@ export function dinero(
 /** `1,2 mil $` — para ejes de gráficos y cifras grandes en poco espacio. */
 export function dineroCompacto(
   valor: string | number | null | undefined,
-  moneda = monedaPorDefecto,
+  moneda = monedaPorDefecto.value,
 ): string {
   // `notation: 'compact'` con `style: 'currency'` da resultados desiguales entre
   // navegadores, así que se compone: número compacto más el símbolo de la moneda.
   const compacto = memo(
     'compacto',
-    () => new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 1 }),
+    () => new Intl.NumberFormat(locale.value, { notation: 'compact', maximumFractionDigits: 1 }),
   ).format(aNumero(valor))
   return `${compacto} ${simboloDe(moneda)}`
 }
@@ -117,7 +129,7 @@ export function dineroCompacto(
  * lo que no es número. Así `USD` da `$`, `EUR` da `€` y una moneda que el
  * navegador no conozca da su propio código, que es lo correcto.
  */
-export function simboloDe(moneda = monedaPorDefecto): string {
+export function simboloDe(moneda = monedaPorDefecto.value): string {
   return formateadorMoneda(moneda, false)
     .formatToParts(0)
     .filter((parte) => parte.type === 'currency')
@@ -134,12 +146,12 @@ export function simboloDe(moneda = monedaPorDefecto): string {
  */
 export function dineroHablado(
   valor: string | number | null | undefined,
-  moneda = monedaPorDefecto,
+  moneda = monedaPorDefecto.value,
 ): string {
   return memo(
     `hablado:${moneda}`,
     () =>
-      new Intl.NumberFormat(locale, {
+      new Intl.NumberFormat(locale.value, {
         style: 'currency',
         currency: moneda,
         currencyDisplay: 'name',
@@ -148,9 +160,9 @@ export function dineroHablado(
 }
 
 /** El nombre de la moneda: `dólar estadounidense`, `euro`. */
-export function nombreMoneda(moneda = monedaPorDefecto): string {
+export function nombreMoneda(moneda = monedaPorDefecto.value): string {
   try {
-    return new Intl.DisplayNames([locale], { type: 'currency' }).of(moneda) ?? moneda
+    return new Intl.DisplayNames([locale.value], { type: 'currency' }).of(moneda) ?? moneda
   } catch {
     return moneda
   }
@@ -166,13 +178,13 @@ export function nombreMoneda(moneda = monedaPorDefecto): string {
 export function precioUnitario(
   valor: string | number | null | undefined,
   unidad?: string | null,
-  moneda = monedaPorDefecto,
+  moneda = monedaPorDefecto.value,
 ): string {
   if (valor === null || valor === undefined || valor === '') return '—'
   const texto = memo(
     `precio:${moneda}`,
     () =>
-      new Intl.NumberFormat(locale, {
+      new Intl.NumberFormat(locale.value, {
         style: 'currency',
         currency: moneda,
         minimumFractionDigits: 2,
@@ -197,7 +209,7 @@ export function cantidad(
   const texto = memo(
     'cantidad',
     () =>
-      new Intl.NumberFormat(locale, { minimumFractionDigits: 0, maximumFractionDigits: 3 }),
+      new Intl.NumberFormat(locale.value, { minimumFractionDigits: 0, maximumFractionDigits: 3 }),
   ).format(n)
   if (!unidad) return n === 1 ? `${texto} ud.` : `${texto} uds.`
   return `${texto} ${unidad}`
@@ -245,7 +257,7 @@ export function fechaCorta(valor: string | Date | null | undefined): string {
   if (!valor) return '—'
   return memo(
     'fechaCorta',
-    () => new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'short', year: 'numeric' }),
+    () => new Intl.DateTimeFormat(locale.value, { day: 'numeric', month: 'short', year: 'numeric' }),
   ).format(aFecha(valor))
 }
 
@@ -254,7 +266,7 @@ export function fechaLarga(valor: string | Date | null | undefined): string {
   if (!valor) return '—'
   return memo(
     'fechaLarga',
-    () => new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'long', year: 'numeric' }),
+    () => new Intl.DateTimeFormat(locale.value, { day: 'numeric', month: 'long', year: 'numeric' }),
   ).format(aFecha(valor))
 }
 
@@ -263,7 +275,7 @@ export function mesAnyo(valor: string | Date | null | undefined): string {
   if (!valor) return '—'
   const texto = memo(
     'mesAnyo',
-    () => new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric' }),
+    () => new Intl.DateTimeFormat(locale.value, { month: 'long', year: 'numeric' }),
   ).format(aFecha(valor))
   return texto.charAt(0).toUpperCase() + texto.slice(1)
 }
@@ -290,7 +302,7 @@ export function desplazarPeriodo(periodo: string, meses: number): string {
 /** `hace 3 días`, `en 2 meses`. */
 export function tiempoRelativo(valor: string | Date | null | undefined): string {
   if (!valor) return '—'
-  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' })
+  const rtf = new Intl.RelativeTimeFormat(locale.value, { numeric: 'auto' })
   const diffMs = aFecha(valor).getTime() - Date.now()
   const dias = Math.round(diffMs / 86_400_000)
   if (Math.abs(dias) < 1) return 'hoy'
