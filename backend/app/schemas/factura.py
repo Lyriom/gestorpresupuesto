@@ -130,7 +130,7 @@ class FacturaRespuesta(RespuestaSellada):
     taxable_base: ImporteStr | None = None
     tax_amount: ImporteStr | None = None
     total: ImporteStr | None = None
-    currency: str = "EUR"
+    currency: str
     # Extracción
     extraction_method: MetodoExtraccion = "ninguno"
     pages: int = 0
@@ -142,11 +142,15 @@ class FacturaRespuesta(RespuestaSellada):
         default=None, description="lines_sum − total, si descuadra."
     )
     low_confidence_lines: int = 0
-    # Fichero
-    filename: str
-    size_bytes: int
-    checksum: str = Field(description="SHA-256: la misma factura no se sube dos veces (RN-44).")
-    file_url: str
+    # Fichero. Los cuatro son nulos en una factura metida a mano: no tiene
+    # documento, y fingir uno dejaría a la interfaz ofreciendo «ver original»
+    # para algo que no existe.
+    filename: str | None = None
+    size_bytes: int | None = None
+    checksum: str | None = Field(
+        default=None, description="SHA-256: la misma factura no se sube dos veces (RN-44)."
+    )
+    file_url: str | None = None
     # Vínculos
     payee_id: UUID | None = None
     payee: ComercioRefRespuesta | None = None
@@ -239,6 +243,63 @@ class LineaFacturaCrear(Peticion):
     is_excluded: bool = False
     is_product: bool = True
     position: int | None = Field(default=None, ge=0)
+
+
+class FacturaManualCrear(Peticion):
+    """Factura metida a mano: el ticket de papel, la compra sin PDF.
+
+    Pide lo mínimo que hace falta para que la factura sirva de algo: quién la
+    emitió, cuándo y cuánto. Las líneas son opcionales, pero **sin ellas la
+    factura no aporta nada al seguimiento de precios**, que es para lo que está
+    el catálogo de productos; la interfaz lo advierte.
+
+    El «concepto» es la temática, y se puede dar de dos maneras: con
+    `category_id` si ya existe o con `category_name` si es nueva, y entonces se
+    crea. Las dos a la vez no, porque no habría forma de saber cuál manda.
+    """
+
+    issuer: Nombre
+    issuer_tax_id: str | None = Field(default=None, max_length=20)
+    number: str | None = Field(default=None, max_length=60)
+    date: Fecha
+    taxable_base: ImporteStr | None = None
+    tax_amount: ImporteStr | None = None
+    total: ImporteStr = Field(gt=0, description="En positivo, como en el papel.")
+    currency: Moneda | None = Field(default=None, description="Por defecto, la del hogar.")
+    payee_id: UUID | None = None
+    category_id: UUID | None = Field(default=None, description="El concepto, si ya existe.")
+    category_name: Nombre | None = Field(
+        default=None, description="El concepto cuando es nuevo: se crea la temática."
+    )
+    account_id: UUID | None = Field(
+        default=None,
+        description="Si viene, la factura se confirma y genera el movimiento en el acto.",
+    )
+    note: str | None = Field(default=None, max_length=2000)
+    lines: list[LineaFacturaCrear] = Field(default_factory=list, max_length=200)
+    allow_total_mismatch: bool = Field(
+        default=False,
+        description=(
+            "Confirmar aunque las líneas no sumen el total. En una factura con "
+            "impuestos es lo normal: las líneas suman la base y el total lleva el IVA."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _un_solo_concepto(self) -> FacturaManualCrear:
+        if self.category_id is not None and self.category_name is not None:
+            fallo(
+                "concepto_ambiguo",
+                "Elige una temática existente o escribe una nueva, no las dos.",
+            )
+        # Confirmar en el acto crea un movimiento, y un movimiento sin temática
+        # queda fuera de la barra del presupuesto: es justo lo que se quiere evitar.
+        if self.account_id is not None and self.category_id is None and self.category_name is None:
+            fallo(
+                "falta_el_concepto",
+                "Para guardar la factura y el gasto de una vez hace falta la temática.",
+            )
+        return self
 
 
 class LineaRevisionCrear(Peticion):

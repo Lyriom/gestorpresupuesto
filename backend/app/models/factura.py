@@ -86,10 +86,14 @@ class Invoice(DomainBase):
     )
     # Texto crudo, para reprocesar sin volver a leer el PDF.
     raw_text: Mapped[str | None] = mapped_column(Text)
-    file_name: Mapped[str] = mapped_column(Text, nullable=False)
-    storage_key: Mapped[str] = mapped_column(Text, nullable=False)
-    byte_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    content_sha256: Mapped[str] = mapped_column(CHAR(64), nullable=False)
+    # Las cuatro son nulas en una factura metida a mano, que no tiene documento.
+    # La restricción `fichero_si_y_solo_si_subida` exige que vayan las cuatro
+    # juntas o ninguna, según el origen: una factura subida sin su PDF sigue
+    # siendo imposible.
+    file_name: Mapped[str | None] = mapped_column(Text)
+    storage_key: Mapped[str | None] = mapped_column(Text)
+    byte_size: Mapped[int | None] = mapped_column(BigInteger)
+    content_sha256: Mapped[str | None] = mapped_column(CHAR(64))
     duplicate_of_id: Mapped[uuid.UUID | None] = uuid_fk("invoices.id", ondelete="SET NULL")
     processing_started_at: Mapped[datetime | None]
     processed_at: Mapped[datetime | None]
@@ -154,7 +158,14 @@ class Invoice(DomainBase):
             "extraction_method IN ('tabla', 'texto', 'ocr', 'ninguno')",
             name="extraction_method",
         ),
-        CheckConstraint("source IN ('upload', 'email', 'api')", name="source"),
+        CheckConstraint("source IN ('upload', 'email', 'api', 'manual')", name="source"),
+        CheckConstraint(
+            "(source = 'manual' AND num_nulls("
+            "file_name, storage_key, byte_size, content_sha256) = 4) OR "
+            "(source <> 'manual' AND num_nulls("
+            "file_name, storage_key, byte_size, content_sha256) = 0)",
+            name="fichero_si_y_solo_si_subida",
+        ),
         CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence"),
         CheckConstraint("jsonb_typeof(warnings) = 'array'", name="warnings_is_array"),
         CheckConstraint(

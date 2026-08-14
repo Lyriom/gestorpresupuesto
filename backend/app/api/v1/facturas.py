@@ -48,6 +48,8 @@ from sqlalchemy.orm import selectinload
 from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import Alcance, AlcanceEscritura, AlcanceHogar, verificar_csrf
+from app.api.v1.categorias import crear as crear_tematica
+from app.api.v1.cuentas import moneda_del_hogar_actual
 from app.api.v1.productos import (
     Emparejamiento,
     _u8,
@@ -74,7 +76,7 @@ from app.models.cuenta import Account
 from app.models.factura import ExtractionTemplate, Invoice, InvoiceLine
 from app.models.producto import Product, ProductPrice
 from app.models.transaccion import Transaction, TransactionSplit
-from app.schemas.categoria import CategoriaRefRespuesta
+from app.schemas.categoria import CategoriaCrear, CategoriaRefRespuesta, TipoTematica
 from app.schemas.comun import Pagina
 from app.schemas.factura import (
     CONFIANZA_BAJA,
@@ -86,6 +88,7 @@ from app.schemas.factura import (
     FacturaDuplicadaRespuesta,
     FacturaEstadoRespuesta,
     FacturaFiltro,
+    FacturaManualCrear,
     FacturaReprocesarCrear,
     FacturaRespuesta,
     LineaFacturaActualizar,
@@ -148,6 +151,10 @@ RESERVADOS_WINDOWS = frozenset(
 )
 
 CERO = Decimal("0.00")
+
+#: Lo que se responde cuando se pide el documento de una factura que no lo tiene.
+#: Una metida a mano no guarda fichero: no es que se haya perdido, es que no hubo.
+SIN_FICHERO = "Esta factura se metió a mano y no tiene documento original."
 
 #: Formas jurídicas que se quitan al normalizar el emisor para detectar duplicados.
 _FORMAS_JURIDICAS = re.compile(
@@ -781,7 +788,13 @@ async def respuesta_factura(
         filename=factura.file_name,
         size_bytes=factura.byte_size,
         checksum=factura.content_sha256,
-        file_url=f"{settings.api_prefix}/invoices/{factura.id}/file",
+        # Sin documento no se ofrece enlace: así la interfaz sabe que no hay
+        # «ver original» que enseñar sin tener que deducirlo de otro campo.
+        file_url=(
+            f"{settings.api_prefix}/invoices/{factura.id}/file"
+            if factura.storage_key is not None
+            else None
+        ),
         payee_id=factura.payee_id,
         payee=ref_comercio(comercio),
         account_id=None,
@@ -934,6 +947,138 @@ async def subir(
 
     tareas.add_task(procesar_factura, _motor(alcance.sesion), factura.id, alcance.household_id)
     return await respuesta_factura(alcance, factura)
+
+
+async def _tematica_del_concepto(
+    alcance: AlcanceHogar, *, category_id: uuidlib.UUID | None, category_name: str | None
+) -> Category | None:
+    """Resuelve el concepto: la temática que ya existe o una nueva con ese nombre.
+
+    Si el nombre coincide con una que ya hay —comparando sin acentos ni
+    mayúsculas, que es como la buscaría una persona— se reutiliza en lugar de
+    crear una gemela. Escribir «alimentacion» cuando existe «Alimentación» no
+    debe acabar en dos temáticas que hay que fusionar después.
+    """
+    if category_id is not None:
+        return await _validar_categoria(alcance, category_id)
+    if category_name is None:
+        return None
+
+    buscado = sin_acentos(category_name).casefold()
+    for candidata in await alcance.sesion.scalars(
+        select(Category).where(
+            Category.household_id == alcance.household_id,
+            Category.kind == "expense",
+            Category.archived_at.is_(None),
+        )
+    ):
+        if sin_acentos(candidata.name).casefold() == buscado:
+            return candidata
+
+    # Se crea llamando al endpoint de temáticas y no construyendo la fila aquí:
+    # una temática tiene columnas derivadas (`path_ids`, `depth`, `sort_key`, la
+    # ranura de color) y reglas de negocio propias (RN-11 a RN-13). Duplicar eso
+    # es garantizar que las dos copias se separen; la primera versión de esto ni
+    # llegó a guardar, porque `path_ids` es `NOT NULL`.
+    creada = await crear_tematica(
+        CategoriaCrear(name=category_name, kind=TipoTematica.EXPENSE), alcance, Response()
+    )
+    return await alcance.sesion.get(Category, creada.id)
+
+
+@router.post(
+    "/invoices/manual",
+    tags=["invoices"],
+    status_code=status.HTTP_201_CREATED,
+    summary="Da de alta una factura a mano",
+)
+async def crear_a_mano(alcance: AlcanceEscritura, datos: FacturaManualCrear) -> FacturaRespuesta:
+    """Una factura sin PDF: el ticket de papel, la compra de la que no hay nada.
+
+    Queda igual que una extraída y en el mismo estado, `pending_review`, así que
+    se revisa y se confirma por el mismo camino y alimenta el histórico de
+    precios exactamente igual. Lo único que no tiene es documento original.
+
+    Con `account_id` se confirma en el acto reutilizando `confirmar()`, que es
+    quien sabe hacerlo todo en una sola transacción (RN-47). Si esa parte fallara,
+    la factura se queda guardada y sin confirmar, que es un estado del que se
+    puede salir desde la pantalla de revisión; lo que no puede pasar es perder lo
+    que el usuario acabó de teclear.
+    """
+    tematica = await _tematica_del_concepto(
+        alcance, category_id=datos.category_id, category_name=datos.category_name
+    )
+    if datos.payee_id is not None:
+        comercio = await alcance.sesion.get(Payee, datos.payee_id)
+        if comercio is None or comercio.household_id != alcance.household_id:
+            raise NoEncontrado("Ese comercio no existe.")
+
+    factura = Invoice(
+        household_id=alcance.household_id,
+        payee_id=datos.payee_id,
+        status=EstadoFactura.PENDING_REVIEW.value,
+        source="manual",
+        extraction_method="ninguno",
+        page_count=0,
+        # Lo ha escrito una persona mirando el papel: no hay nada que dudar.
+        confidence=Decimal("1.000"),
+        issuer_name=datos.issuer,
+        issuer_tax_id=datos.issuer_tax_id,
+        invoice_number=datos.number,
+        issued_on=datos.date,
+        taxable_base=datos.taxable_base,
+        tax_amount=datos.tax_amount,
+        total_amount=datos.total,
+        currency=datos.currency or await moneda_del_hogar_actual(alcance),
+        notes=datos.note,
+        uploaded_by_id=alcance.usuario.id,
+        processed_at=ahora(),
+    )
+    alcance.sesion.add(factura)
+    await alcance.sesion.flush()
+
+    for numero, entrada in enumerate(datos.lines, start=1):
+        linea = InvoiceLine(
+            household_id=alcance.household_id,
+            invoice_id=factura.id,
+            line_number=numero,
+            raw_description=entrada.description[:300],
+            quantity=entrada.quantity or None,
+            unit=_u8(entrada.unit),
+            unit_price=entrada.unit_price,
+            line_total=entrada.total,
+            confidence=Decimal("1.000"),
+            normalized_description="",
+            grouping_key="",
+            excluded=entrada.is_excluded,
+            # Sin temática propia, la de la factura: así ninguna línea queda
+            # fuera de la barra del presupuesto al confirmar.
+            category_id=entrada.category_id or (tematica.id if tematica else None),
+        )
+        if entrada.category_id is not None:
+            await _validar_categoria(alcance, entrada.category_id)
+        alcance.sesion.add(linea)
+        _renormalizar(linea)
+        if not entrada.is_product:
+            _marcar_no_producto(linea)
+        _recalcular(linea, {"quantity", "unit_price", "total"})
+
+    await alcance.sesion.commit()
+
+    if datos.account_id is not None:
+        assert tematica is not None  # el esquema lo exige  # noqa: S101
+        await confirmar(
+            alcance,
+            factura.id,
+            FacturaConfirmarCrear(
+                account_id=datos.account_id,
+                default_category_id=tematica.id,
+                allow_total_mismatch=datos.allow_total_mismatch,
+            ),
+        )
+        await alcance.sesion.refresh(factura)
+
+    return await respuesta_factura(alcance, factura, incluir_lineas=True)
 
 
 @router.get("/invoices", tags=["invoices"], summary="Bandeja de facturas")
@@ -1213,6 +1358,11 @@ async def _deducir_de_factura(
     )
     # Se relee el PDF para saber qué habría leído el extractor genérico: comparar
     # contra las líneas guardadas no serviría, porque ya llevan la corrección.
+    if factura.storage_key is None:
+        raise ReglaDeNegocio(
+            f"{SIN_FICHERO} Una plantilla se deduce comparando lo que el lector "
+            "sacó del PDF con lo que corregiste, así que hace falta el PDF."
+        )
     try:
         datos = ruta_de(factura.storage_key).read_bytes()
         leida = await run_in_threadpool(
@@ -1390,6 +1540,8 @@ async def probar_plantilla(
     fila = await _plantilla_o_404(alcance, template_id)
     plantilla = plantilla_desde_fila(fila)
     factura = await _factura_o_404(alcance, datos.invoice_id)
+    if factura.storage_key is None:
+        raise ReglaDeNegocio(f"{SIN_FICHERO} Prueba la plantilla con una factura subida.")
     try:
         contenido = ruta_de(factura.storage_key).read_bytes()
     except OSError as exc:
@@ -1540,6 +1692,8 @@ async def descargar(
 ) -> FileResponse:
     """El `Content-Type` lo fija el servidor, nunca el cliente (§8.3)."""
     factura = await _factura_o_404(alcance, invoice_id)
+    if factura.storage_key is None:
+        raise NoEncontrado(SIN_FICHERO)
     ruta = ruta_de(factura.storage_key)
     if not ruta.is_file():
         raise NoEncontrado("El fichero de esta factura ya no está en el disco.")
@@ -1582,7 +1736,11 @@ async def _candidatas_duplicado(
     numero = normalizar_numero(factura.invoice_number)
     candidatas: list[FacturaDuplicadaRespuesta] = []
     for otra in otras:
-        if otra.content_sha256 == factura.content_sha256:
+        # El `is not None` no es defensivo: las facturas metidas a mano no tienen
+        # checksum, y sin esta comprobación dos de ellas «coinciden» porque las dos
+        # valen `None`. Cualquier segunda factura a mano se declaraba duplicada de
+        # la primera con confianza 1,0 y el confirmar la rechazaba.
+        if factura.content_sha256 is not None and otra.content_sha256 == factura.content_sha256:
             motivo, confianza = "checksum", 1.0
         elif (
             emisor
@@ -2870,10 +3028,11 @@ async def borrar(
         if transaccion is not None:
             await alcance.sesion.delete(transaccion)
 
-    ruta = ruta_de(factura.storage_key)
+    ruta = ruta_de(factura.storage_key) if factura.storage_key else None
     await alcance.sesion.delete(factura)
     await alcance.sesion.commit()
     # El fichero se borra **después** del COMMIT: si la transacción falla, el PDF
-    # sigue estando (RN-78).
-    ruta.unlink(missing_ok=True)
+    # sigue estando (RN-78). Una factura a mano no tiene ninguno que borrar.
+    if ruta is not None:
+        ruta.unlink(missing_ok=True)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
