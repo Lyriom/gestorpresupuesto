@@ -102,10 +102,39 @@ Sin este volumen, las facturas subidas desaparecen en cada despliegue.
 
 ## 5. Dominio y HTTPS
 
-Pestaña **Domains** → añade tu dominio (por ejemplo `presupuesto.gozsyl.cloud`),
-`Port` **8000**, y activa **HTTPS** con Let's Encrypt. EasyPanel gestiona el
-certificado y termina el TLS en su proxy; la aplicación arranca con
-`--proxy-headers` para leer bien la IP y el esquema originales.
+**El subdominio no se crea solo.** EasyPanel hace dos de las tres cosas: enruta el
+tráfico al contenedor y pide el certificado. Lo que no puede hacer es el registro
+DNS, porque tu dominio no lo gestiona él. Sin ese registro, EasyPanel se queda
+esperando la validación de Let's Encrypt y el dominio no llega a funcionar.
+
+Primero, en tu proveedor de DNS, un registro que apunte al servidor:
+
+| Tipo | Nombre | Valor | TTL |
+| --- | --- | --- | --- |
+| A | `presupuesto` | la IP del servidor | 600 |
+
+Si vas a montar más aplicaciones en el mismo servidor, mejor un **comodín** y no
+tocas el DNS nunca más: `A` con nombre `*` apuntando a la misma IP. Cualquier
+subdominio que se te ocurra funcionará al instante. Y no impide el HTTPS: el
+certificado se pide para cada nombre concreto por HTTP, no hace falta un
+certificado comodín ni validación por DNS.
+
+Comprueba que ha propagado antes de seguir (suele tardar entre 1 y 30 minutos):
+
+```bash
+dig +short presupuesto.tudominio.com
+# tiene que responder la IP del servidor
+```
+
+Después, en EasyPanel: pestaña **Domains** del servicio de la aplicación → **Add
+Domain** → el nombre completo (`presupuesto.tudominio.com`), `Port` **8000**, y
+**HTTPS** activado. EasyPanel gestiona el certificado y termina el TLS en su
+proxy; la aplicación arranca con `--proxy-headers` para leer bien la IP y el
+esquema originales.
+
+Si solo quieres probar sin tocar el DNS, EasyPanel puede generar un dominio
+gratuito acabado en `.easypanel.host` que ya apunta a tu servidor. Sirve para ver
+que todo va, pero para usarlo a diario pon tu subdominio.
 
 ## 6. Desplegar
 
@@ -171,6 +200,8 @@ Además, la propia aplicación permite exportar todos tus datos en JSON desde
 | Las facturas desaparecen tras desplegar | Falta el volumen montado en `/data` |
 | La web carga pero la API da 404 | El build no copió los estáticos: revisa que el build use el `Dockerfile` de la raíz |
 | Los logs dicen `permission denied to create role` | El usuario de `DATABASE_URL` no es el dueño de la base. Usa el que creó EasyPanel con el servicio de Postgres |
+| El dominio se queda «pendiente» y no da HTTPS | Falta el registro DNS, o todavía no ha propagado. `dig +short tu.subdominio.com` tiene que devolver la IP del servidor antes de que Let's Encrypt pueda validar |
+| `could not translate host name` en los logs | El host de `DATABASE_URL` no es `<proyecto>_<servicio>`. El prefijo es el nombre del **proyecto** de EasyPanel, no el del repositorio |
 | El navegador no ofrece «Instalar aplicación» | Solo aparece con HTTPS y dominio propio; en `http://` el navegador no instala nada |
 
 ## Consumo aproximado
