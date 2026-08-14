@@ -1067,15 +1067,26 @@ async def crear_a_mano(alcance: AlcanceEscritura, datos: FacturaManualCrear) -> 
 
     if datos.account_id is not None:
         assert tematica is not None  # el esquema lo exige  # noqa: S101
-        await confirmar(
-            alcance,
-            factura.id,
-            FacturaConfirmarCrear(
-                account_id=datos.account_id,
-                default_category_id=tematica.id,
-                allow_total_mismatch=datos.allow_total_mismatch,
-            ),
-        )
+        try:
+            await confirmar(
+                alcance,
+                factura.id,
+                FacturaConfirmarCrear(
+                    account_id=datos.account_id,
+                    default_category_id=tematica.id,
+                    allow_total_mismatch=datos.allow_total_mismatch,
+                ),
+            )
+        except (ReglaDeNegocio, Conflicto) as exc:
+            # La factura ya está guardada, y no se borra: lo que el usuario acabó
+            # de teclear no se tira porque el gasto no se pudiera anotar. Pero
+            # tampoco se le puede dar un error a secas, porque entonces cree que
+            # no se guardó nada, vuelve a teclearlo y acaba con dos.
+            exc.mensaje = (
+                f"{exc.mensaje} La factura sí se ha guardado, y está pendiente de "
+                "revisar: no hace falta volver a teclearla."
+            )
+            raise
         await alcance.sesion.refresh(factura)
 
     return await respuesta_factura(alcance, factura, incluir_lineas=True)

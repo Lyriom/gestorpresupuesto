@@ -8,7 +8,7 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { FileUp } from 'lucide-vue-next'
+import { FileUp, PencilLine } from 'lucide-vue-next'
 
 import {
   ETIQUETA_CONFIANZA,
@@ -23,6 +23,7 @@ import { dinero, fechaCorta, porcentaje } from '@/lib/formato'
 import { useFacturas } from '@/stores/facturas'
 import { useSesion } from '@/stores/sesion'
 import BloqueError from './componentes/BloqueError.vue'
+import ModalFacturaManual from './componentes/ModalFacturaManual.vue'
 
 const EXTENSIONES = ['.pdf', '.jpg', '.jpeg', '.png']
 
@@ -33,6 +34,13 @@ const sesion = useSesion()
 const entrada = ref<HTMLInputElement | null>(null)
 const arrastrando = ref(false)
 const errorFichero = ref<string | null>(null)
+const modalManual = ref(false)
+
+async function alCrearAMano(id: string): Promise<void> {
+  await facturas.cargar()
+  // A revisar directamente: es donde se asignan las temáticas línea a línea.
+  void router.push({ name: 'revisar-factura', params: { id } })
+}
 
 const maxMb = computed(() => sesion.maxSubidaMb)
 const mensajeFormato = computed(
@@ -113,6 +121,13 @@ onMounted(() => {
       <p class="limites">
         PDF, JPG o PNG · hasta {{ maxMb }} MB · una factura por archivo
       </p>
+      <p class="a-mano">
+        ¿No tienes el archivo?
+        <BotonBase variante="enlace" @click="modalManual = true">
+          <PencilLine :size="14" aria-hidden="true" />
+          Añádela a mano
+        </BotonBase>
+      </p>
       <input
         ref="entrada"
         class="oculto"
@@ -124,6 +139,8 @@ onMounted(() => {
     </div>
 
     <p v-if="errorFichero" class="error-fichero" role="alert">{{ errorFichero }}</p>
+
+    <ModalFacturaManual v-model:abierto="modalManual" @creada="alCrearAMano" />
 
     <section class="bloque" aria-labelledby="titulo-ultimas">
       <h2 id="titulo-ultimas" class="titulo-bloque">Últimas facturas</h2>

@@ -298,9 +298,47 @@ export interface FiltroFacturas extends ParamsListado {
   include?: Array<'lines' | 'duplicates'>
 }
 
+/** Una línea del alta manual: se teclea cantidad y precio, el total lo hace el servidor. */
+export interface LineaManualCrear {
+  description: string
+  quantity?: string | null
+  unit?: string | null
+  unit_price?: string | null
+  total?: string | null
+  category_id?: UUID | null
+}
+
+/**
+ * Factura metida a mano, sin PDF.
+ *
+ * El «concepto» es la temática y va de una de las dos formas, nunca las dos:
+ * `category_id` si ya existe o `category_name` si es nueva, y entonces se crea.
+ * Con `account_id` se guarda y se confirma de una vez.
+ */
+export interface FacturaManualCrear {
+  issuer: string
+  issuer_tax_id?: string | null
+  number?: string | null
+  date: string
+  taxable_base?: string | null
+  tax_amount?: string | null
+  total: string
+  currency?: string | null
+  payee_id?: UUID | null
+  category_id?: UUID | null
+  category_name?: string | null
+  account_id?: UUID | null
+  note?: string | null
+  lines?: LineaManualCrear[]
+  allow_total_mismatch?: boolean
+}
+
 export const apiFacturas = {
   listar: (filtro: FiltroFacturas = {}) =>
     api.get<Pagina<Factura>>(conQuery('/invoices', filtro as Params)),
+
+  /** Alta a mano: el ticket de papel. Responde 201 con la factura y sus líneas. */
+  crearAMano: (cuerpo: FacturaManualCrear) => api.post<Factura>('/invoices/manual', cuerpo),
 
   /** Sube el PDF con el campo de formulario `fichero`. Responde 202. */
   subir: (

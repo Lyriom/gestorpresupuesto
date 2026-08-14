@@ -258,6 +258,29 @@ async def test_dos_compras_a_mano_dan_la_variacion_de_precio(cliente, entorno):
     assert round(float(observaciones[1].change_pct), 1) == 16.7
 
 
+async def test_si_falla_anotar_el_gasto_la_factura_no_se_pierde_y_se_avisa(cliente, entorno):
+    """El caso feo: guardar y confirmar de una vez, y que la confirmación falle.
+
+    La factura ya está guardada cuando se intenta confirmar. Borrarla sería tirar
+    lo que el usuario acabó de teclear; dejarla con un error a secas es peor,
+    porque cree que no se guardó nada, lo vuelve a teclear y acaba con dos.
+    """
+    cuerpo = factura_de_papel(entorno, account_id=str(entorno.cuenta_id))
+    # Las líneas suman 23,55 y aquí se dice que el total es otro, sin aceptarlo.
+    cuerpo["total"] = "30.00"
+
+    respuesta = await cliente.post(RUTA, json=cuerpo)
+
+    assert respuesta.status_code == 422
+    mensaje = respuesta.json()["error"]["mensaje"]
+    assert "no cuadra" in mensaje or "suman" in mensaje
+    assert "sí se ha guardado" in mensaje
+    # Y está de verdad, esperando revisión.
+    guardadas = await filas(Invoice, entorno)
+    assert len(guardadas) == 1
+    assert guardadas[0].status == "pending_review"
+
+
 # --------------------------------------------------------------------------- #
 # La invariante del fichero
 # --------------------------------------------------------------------------- #
