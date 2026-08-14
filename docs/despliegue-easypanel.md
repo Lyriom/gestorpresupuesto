@@ -60,6 +60,23 @@ DEFAULT_LOCALE=es-ES
 DEFAULT_TIMEZONE=Europe/Madrid
 ```
 
+**No copies la cadena de conexión que te da EasyPanel tal cual.** En la ficha del
+servicio de Postgres aparece con la forma de `libpq`, y hay que traducir dos
+cosas o la aplicación no arranca:
+
+| Lo que te da EasyPanel | Lo que hay que poner | Si no |
+| --- | --- | --- |
+| `postgres://` | `postgresql+asyncpg://` | `Can't load plugin: sqlalchemy.dialects:postgres` al arrancar. Ese dialecto no existe en SQLAlchemy |
+| `?sslmode=disable` al final | quítalo entero | `TypeError: connect() got an unexpected keyword argument 'sslmode'` al conectar. `sslmode` es de `psycopg2`; aquí el driver es `asyncpg` |
+
+El síntoma es el mismo en los dos casos: el contenedor reinicia en bucle, y en el
+panel se ve la memoria como `NaN` y la CPU disparada.
+
+Y el host lleva **el nombre del proyecto de EasyPanel** como prefijo, no el del
+repositorio: un servicio `db` en el proyecto `mis-cosas` es `mis-cosas_db`. Si la
+contraseña generada lleva `@`, `:`, `/`, `#` o `?`, rompe la URL: cámbiala por una
+de letras y números.
+
 **`TRUSTED_PROXIES` no es un detalle.** La aplicación cuenta los intentos de
 acceso por dirección IP, y detrás de un proxy la IP real solo llega en la
 cabecera `X-Forwarded-For`. Esa cabecera la puede escribir cualquiera, así que la
@@ -194,6 +211,8 @@ Además, la propia aplicación permite exportar todos tus datos en JSON desde
 | Síntoma | Causa probable |
 | --- | --- |
 | El contenedor reinicia en bucle y los logs muestran fallos de migración | `DATABASE_URL` mal formada o el servicio `db` todavía no está listo. Revisa el host: es `<proyecto>_db`, no `localhost` |
+| Sale el **404 de EasyPanel** (con su logo y «configured your domain correctly») | La petición llega a su proxy pero no hay ninguna ruta para ese nombre: falta añadir el dominio en la pestaña **Domains** del servicio. Ojo, el `301` de HTTP a HTTPS lo hace EasyPanel para cualquier nombre, así que no prueba que el dominio esté configurado |
+| **502 Bad Gateway** con el dominio ya añadido | El `Port` del dominio no es **8000**. Viene con 80 o 3000 por defecto |
 | Entras, recargas y te echa fuera | Falta `COOKIE_SECURE=true` con HTTPS, o `SECRET_KEY` cambia entre despliegues (defínela como variable fija, no generada) |
 | Las facturas escaneadas no extraen nada | `OCR_ENABLED=false`, o el PDF es una imagen de baja resolución. Tesseract y el diccionario español ya vienen en la imagen |
 | Error 413 al subir una factura | Supera `MAX_UPLOAD_MB`; súbelo y redespliega |
