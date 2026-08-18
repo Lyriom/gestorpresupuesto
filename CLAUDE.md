@@ -38,6 +38,14 @@ en la raíz (copia de `.env.example`) con `SECRET_KEY` y `DATABASE_URL`.
   `float`. En JSON los importes viajan **como cadena decimal**, no como número.
 - **Idioma**: código, nombres de tabla, columnas y rutas en inglés; comentarios,
   docstrings, mensajes de error y todo el texto visible al usuario en español.
+- **Periodo presupuestario**: un mes (`2026-08`) o una **semana ISO** (`2026-W33`), de
+  lunes a domingo. La aritmética vive **solo** en `app/services/presupuesto.py`
+  (`inicio_de`, `fin_de`, `periodo_anterior`, `periodo_siguiente`) y en
+  `lib/formato.ts`; ningún router ni componente vuelve a mirar la forma de la
+  cadena. La granularidad se guarda **en cada fila** de `budget_periods`, no solo
+  en el ajuste del hogar: el ajuste dice cómo se presupuesta de ahora en adelante y
+  la fila dice qué era ese periodo. Los informes son mensuales a propósito, y por eso
+  hay dos tipos: `Periodo` (mes) y `PeriodoPresupuesto` (mes o semana).
 - **Moneda e idioma de la interfaz**: **no se escriben en el código**. Salen de
   `DEFAULT_CURRENCY` y `DEFAULT_LOCALE`, y la moneda de cada hogar manda sobre
   la de la instalación. Por defecto, dólares y `es-EC`. En el frontend se pinta
@@ -110,6 +118,18 @@ Antes de implementar algo nuevo, mira si ya está especificado:
   guardadas**, así que al insertar una hay que rehacer las posteriores. Si no,
   subir las facturas de la más nueva a la más vieja —el orden en que se listan—
   deja todas las variaciones a nulo y el informe de subidas vacío.
+- Para saber el gasto de un periodo hay que filtrar **por rango de fechas**, no por la
+  columna `period_month` de `vw_movement_lines`, que es siempre el mes del movimiento.
+  Con periodos semanales, agrupar por ella le da a cada una de las cinco semanas de
+  agosto el gasto de agosto entero y todas salen sobrepasadas. Donde hace falta
+  agrupar, se agrupa con `date_trunc(granularity, booked_on::timestamp)`, que da el
+  día 1 o el lunes según toque, o sea lo mismo que guarda `period_start`.
+- Los importes de cuatro cifras o más los **agrupa la máscara** del campo mientras se
+  escribe (`2.800`), y ese mismo texto lo vuelve a leer `parsearImporte()`. Los dos
+  tienen que usar los mismos separadores y la misma regla, o teclear 2800 acaba
+  valiendo 2,80. En un importe, un separador suelto con tres cifras detrás es de
+  millar; en `numeros.py` es al revés, porque allí puede ser un precio unitario de
+  cuatro decimales. No son incoherentes: son dos trabajos distintos.
 - El gasto inusual se compara por **movimiento y temática**, no por línea: una
   factura del súper tiene una línea por producto y comparándolas sueltas el
   producto más caro de una compra normal salta como anomalía.

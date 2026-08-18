@@ -282,7 +282,8 @@ erDiagram
     BUDGET_PERIODS {
         uuid id PK
         uuid household_id FK
-        date period_month "día 1"
+        date period_start "día 1 o lunes"
+        string granularity "month|week"
         numeric expected_income
         varchar income_source "manual|derived"
         timestamptz closed_at
@@ -791,6 +792,7 @@ más importante del documento y se justifica en la sección 7.
 | `locale` | `VARCHAR(10)` | no | `'es-ES'` | |
 | `timezone` | `TEXT` | no | `'Europe/Madrid'` | Define qué es «hoy» para vencimientos |
 | `budget_start_day` | `SMALLINT` | no | `1` | Día en que arranca el mes presupuestario |
+| `budget_granularity` | `VARCHAR(5)` | no | `'month'` | `month` o `week`: de cuánto en cuánto se reparte. Decide los periodos que se crean a partir de ahora; los ya guardados llevan el suyo en `budget_periods.granularity` |
 | `default_rollover_mode` | `VARCHAR(16)` | no | `'none'` | Valor propuesto a las temáticas nuevas (F-26) |
 | `near_limit_pct` | `NUMERIC(5,2)` | no | `85.00` | Umbral del aviso «al 92 %» (F-20) |
 | `price_alert_pct` | `NUMERIC(5,2)` | no | `5.00` | Subida mínima que dispara aviso (F-16) |
@@ -1492,27 +1494,46 @@ fallo entre el `COMMIT` y el borrado del fichero.
 
 ### 2.16 `budget_periods`
 
-**Propósito.** Un mes presupuestario del hogar. Es el contenedor de la BudgetBar: guarda el
-**ingreso previsto** que define el 100 % del carril (F-01) y el estado de cierre que gobierna
-el rollover (F-26).
+**Propósito.** Un periodo presupuestario del hogar —un mes o una semana—. Es el contenedor de
+la BudgetBar: guarda el **ingreso previsto** que define el 100 % del carril (F-01) y el estado
+de cierre que gobierna el rollover (F-26).
 
 | Columna | Tipo SQL | Nulo | Default | Notas |
 |---|---|---|---|---|
 | `household_id` | `UUID` | no | — | |
-| `period_month` | `DATE` | no | — | **Día 1 del mes**, siempre |
+| `period_start` | `DATE` | no | — | **Día 1 del mes** o **lunes de la semana ISO** |
+| `granularity` | `VARCHAR(5)` | no | `'month'` | `month` o `week` |
 | `expected_income` | `NUMERIC(14,2)` | sí | — | Ingreso previsto. `NULL` = usar el real |
 | `income_source` | `VARCHAR(8)` | no | `'derived'` | `manual` o `derived` |
 | `note` | `TEXT` | sí | — | |
-| `closed_at` | `TIMESTAMPTZ` | sí | — | Mes cerrado: el rollover ya se ha calculado |
+| `closed_at` | `TIMESTAMPTZ` | sí | — | Periodo cerrado: el rollover ya se ha calculado |
 | `closed_by_id` | `UUID` | sí | — | |
 | `rollover_applied_at` | `TIMESTAMPTZ` | sí | — | Instante en que se propagó el sobrante |
 
+**Por qué la granularidad va en la fila y no solo en el ajuste del hogar.**
+`households.budget_granularity` dice cómo se presupuesta **de ahora en adelante**; esta columna
+dice qué era **este** periodo cuando se creó. Así, pasar el hogar de meses a semanas no
+reinterpreta lo ya guardado, que es el error clásico de meter la unidad en la configuración en
+vez de en el dato: un `2026-08` seguiría existiendo pero de pronto significaría otra cosa.
+
+**Por qué la semana es la ISO.** De lunes a domingo, la que entiende `date.fromisocalendar()` y
+la que devuelve `date_trunc('week', …)`. Con una sola definición, la restricción de la base, la
+aritmética del servicio y las consultas de gasto coinciden sin convertir nada. Y el año de una
+semana es el suyo, no el del calendario: el 31 de diciembre de 2025 cae en `2026-W01`.
+
 ```sql
-ALTER TABLE budget_periods ADD CONSTRAINT uq_budget_periods_household_id_period_month
-    UNIQUE (household_id, period_month);
--- El día 1 no es una convención de la aplicación: es una restricción de la base.
-ALTER TABLE budget_periods ADD CONSTRAINT ck_budget_periods_first_of_month
-    CHECK (period_month = date_trunc('month', period_month)::date);
+-- La granularidad entra en la unicidad: el 1 de junio de 2026 es lunes, así que junio y la
+-- semana 23 empiezan el mismo día y son dos periodos distintos que deben convivir.
+ALTER TABLE budget_periods ADD CONSTRAINT uq_budget_periods_household_id_granularity_period_start
+    UNIQUE (household_id, granularity, period_start);
+ALTER TABLE budget_periods ADD CONSTRAINT ck_budget_periods_granularity
+    CHECK (granularity IN ('month', 'week'));
+-- Que un mes empiece el día 1 y una semana en lunes no es una convención de la aplicación: es
+-- una restricción de la base, y la misma expresión sirve para las dos porque `date_trunc`
+-- recibe la unidad como dato. El `::timestamp` explícito evita que se resuelva la variante de
+-- `timestamptz`, que es STABLE porque depende del huso de la sesión.
+ALTER TABLE budget_periods ADD CONSTRAINT ck_budget_periods_period_start
+    CHECK (period_start = date_trunc(granularity, period_start::timestamp)::date);
 ALTER TABLE budget_periods ADD CONSTRAINT ck_budget_periods_income_source
     CHECK (income_source IN ('manual', 'derived'));
 ALTER TABLE budget_periods ADD CONSTRAINT ck_budget_periods_expected_income
@@ -1521,8 +1542,8 @@ ALTER TABLE budget_periods ADD CONSTRAINT ck_budget_periods_income_manual_needs_
     CHECK (income_source = 'derived' OR expected_income IS NOT NULL);
 ALTER TABLE budget_periods ADD CONSTRAINT ck_budget_periods_rollover_needs_close
     CHECK (rollover_applied_at IS NULL OR closed_at IS NOT NULL);
-CREATE INDEX ix_budget_periods_household_id_period_month
-    ON budget_periods (household_id, period_month DESC);
+CREATE INDEX ix_budget_periods_household_id_granularity_period_start
+    ON budget_periods (household_id, granularity, period_start DESC);
 ALTER TABLE budget_periods ADD CONSTRAINT uq_budget_periods_household_id_id
     UNIQUE (household_id, id);
 ```

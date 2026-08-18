@@ -115,7 +115,7 @@ Los errores de validación de Pydantic los transforma ya el manejador de
 | `splits_no_cuadran` | 422 | La suma de splits no coincide con el importe |
 | `transferencia_invalida` | 422 | Misma cuenta origen y destino, o transferencia con temática/splits |
 | `presupuesto_negativo` | 422 | Asignación de presupuesto negativa |
-| `periodo_invalido` | 422 | Periodo que no cumple `AAAA-MM` |
+| `periodo_invalido` | 422 | Periodo que no cumple `AAAA-MM` (o `AAAA-Wss` donde se admite semana) |
 | `periodo_cerrado` | 409 | Modificar asignaciones de un periodo ya cerrado |
 | `saldo_insuficiente` | 422 | Retirada de un fondo objetivo mayor que lo acumulado |
 | `factura_ya_confirmada` | 409 | Segundo `POST /invoices/{id}/confirm` |
@@ -222,7 +222,7 @@ Convenciones únicas para todos los listados, para que el cliente pueda construi
 | `has_<algo>` | Booleano de existencia | `has_invoice=true`, `has_attachments=false` |
 | `is_<algo>` / `only_<algo>` | Booleano de estado | `is_archived=false`, `only_recurring=true` |
 | `include_children` | Incluye el subárbol de la temática filtrada (por defecto `true`) | `category_id=…&include_children=false` |
-| `period` | Periodo mensual `AAAA-MM` | `period=2026-08` |
+| `period` | Periodo mensual `AAAA-MM`; los endpoints de presupuesto admiten además la semana ISO `AAAA-Wss` | `period=2026-08`, `period=2026-W33` |
 | `include` | Relaciones a expandir, separadas por comas (§7.1) | `include=splits,tags,payee` |
 
 Reglas transversales:
@@ -308,7 +308,8 @@ Reglas concretas:
   civiles: la fecha de una compra no cambia porque el usuario viaje.
 - **Instantes** (`created_at`, `updated_at`, `uploaded_at`, `confirmed_at`): ISO 8601 en **UTC**
   con sufijo `Z`. La base de datos usa `DateTime(timezone=True)`.
-- **Periodo de presupuesto**: cadena `AAAA-MM`, validada con
+- **Periodo de presupuesto**: cadena `AAAA-MM` o `AAAA-Wss` (semana ISO, de lunes a domingo),
+  validada con
   `^\d{4}-(0[1-9]|1[0-2])$` (RN-30). Es el formato que ya producen y consumen `periodoDe()`,
   `etiquetaPeriodo()` y `desplazarPeriodo()` en `formato.ts`.
 - La zona horaria del usuario (`settings.default_timezone`, `Europe/Madrid`) solo se usa para
@@ -623,7 +624,7 @@ Ver la tabla completa en §3.1 y §3.2.
 | Método | Ruta | Descripción | Auth | Request | Response | Códigos |
 |---|---|---|---|---|---|---|
 | GET | `/budgets` | Periodos con presupuesto, con totales por periodo (para el selector de mes) | S | `Q: period_from, period_to` | `Page[BudgetSummaryOut]` | 200 |
-| GET | `/budgets/{period}` | **El payload del `BudgetBar`**: ingresos, asignado, gastado, rollover entrante y disponible por temática, más los derivados globales. `period` = `AAAA-MM` | S | `Q: include_archived, depth` | `BudgetOut` | 200, 422 `periodo_invalido` |
+| GET | `/budgets/{period}` | **El payload del `BudgetBar`**: ingresos, asignado, gastado, rollover entrante y disponible por temática, más los derivados globales. `period` = `AAAA-MM` o `AAAA-Wss` | S | `Q: include_archived, depth` | `BudgetOut` | 200, 422 `periodo_invalido` |
 | PUT | `/budgets/{period}` | Ajustes del periodo: ingreso previsto (F-01), rollover por defecto, notas | S | `B: BudgetSettingsIn` | `BudgetOut` | 200, 409 `periodo_cerrado`, 422 |
 | GET | `/budgets/{period}/allocations` | Asignaciones por temática del periodo | S | — | `list[AllocationOut]` | 200, 422 |
 | PUT | `/budgets/{period}/allocations` | **Sustituye el reparto completo** del periodo. Idempotente. Ninguna asignación negativa (RN-28) | S | `B: AllocationsReplaceIn`, `H: If-Match` | `BudgetOut` | 200, 409 `periodo_cerrado`, 412, 422 `presupuesto_negativo` |
@@ -982,7 +983,7 @@ Quantity = Annotated[
 ]
 UnitPrice = Quantity
 
-# Periodo de presupuesto: SIEMPRE AAAA-MM (RN-30).
+# Periodo de presupuesto: AAAA-MM, y AAAA-Wss donde se presupuesta (RN-30).
 Period = Annotated[str, StringConstraints(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")]
 Currency = Annotated[str, StringConstraints(pattern=r"^[A-Z]{3}$")]
 Color = Annotated[str, StringConstraints(pattern=r"^#[0-9a-fA-F]{6}$")]
@@ -1619,8 +1620,8 @@ class BudgetOut(Out):
     unassigned: Money = Field(description="income − allocated_total. Puede ser negativo.")
     overallocated: Money = Field(ge=0, description="max(0, allocated_total − income).")
     rollover_in_total: Money
-    day_of_month: int
-    days_in_month: int
+    day_of_period: int   # día dentro del periodo: 4 de 7 en una semana
+    days_in_period: int
     allocations: list[AllocationOut]
 
 
@@ -2856,7 +2857,7 @@ reasignadas.
 |---|---|---|
 | **RN-28** | **El presupuesto asignado nunca es negativo**: `amount ≥ 0` en cada asignación, en `PUT`, en `PATCH`, al copiar de otro periodo, al distribuir y al reasignar. Sí puede ser negativo el **disponible** (`available`) y el **sin asignar** (`unassigned`): eso es información real que la barra pinta como sobreasignación | `422 presupuesto_negativo` |
 | **RN-29** | La reasignación entre temáticas es de suma cero: se resta exactamente lo que se suma, en la misma transacción de base de datos, y el total asignado del periodo no cambia. No puede dejar el origen por debajo de 0 ni tocar una temática con `is_locked=true` | `422 presupuesto_negativo` / `422 regla_de_negocio` |
-| **RN-30** | **El periodo de presupuesto es siempre `AAAA-MM`**, validado con `^\d{4}-(0[1-9]|1[0-2])$`, con año entre 1970 y 2200. Se rechazan `2026-8`, `2026/08`, `08-2026` y `2026-13`. Es el mismo formato que produce `periodoDe()` en el frontend | `422 periodo_invalido` |
+| **RN-30** | **Un periodo es un mes `AAAA-MM` o una semana ISO `AAAA-Wss`**, con año entre 1970 y 2200. Se rechazan `2026-8`, `2026/08`, `08-2026`, `2026-13` y `2026-W54`; también `2025-W53`, porque 2025 tiene 52 semanas ISO y 2026 tiene 53, así que el patrón no basta y hace falta el calendario. Los informes y las alertas son **solo mensuales** y devuelven 422 ante una semana: una serie mensual a la que se le pide una semana no puede contestar nada sensato. Es el mismo formato que produce `periodoDe()` en el frontend | `422 periodo_invalido` |
 | **RN-31** | El gasto de un periodo se calcula por la **fecha de la transacción**, no por la de creación ni por la de la factura. Una transacción con splits aporta a cada temática el importe de su split, nunca el total duplicado | — |
 | **RN-32** | Rollover (F-26), solo si `rollover_enabled` en la temática: `carry_in(p) = allocated(p−1) + carry_in(p−1) − spent(p−1)`. Si sale positivo, entra en el mes siguiente. Si sale negativo, el ajuste `rollover_negative` decide: `carry` lo arrastra (el sobregasto se paga el mes que viene, estilo YNAB) o `reset` lo deja en 0. Sin `rollover_enabled`, `carry_in = 0` | — |
 | **RN-33** | Cerrar un periodo es **idempotente**: consolida el rollover y marca `is_closed`. Cerrarlo dos veces no duplica nada. No se puede cerrar un periodo futuro. Un periodo cerrado rechaza cambios de asignación (`409 periodo_cerrado`) hasta reabrirlo; reabrir recalcula en cascada los periodos posteriores | `409 periodo_cerrado` / `422` |

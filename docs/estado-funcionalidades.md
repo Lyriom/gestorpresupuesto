@@ -25,6 +25,7 @@ resumen por correo.
 | ID | Funcionalidad | Estado | Dónde está |
 | --- | --- | --- | --- |
 | F-01 | Ingreso mensual editable | ✅ | `GET/PUT /budgets/{periodo}`, `GET /budgets/{periodo}/incomes` |
+| — | Presupuesto **por semanas** además de por meses | ✅ | Ajuste `budget_granularity`; el periodo es `2026-08` o `2026-W33` |
 | F-02 | Barra de presupuesto por temática | ✅ | `services/presupuesto.py`, `components/presupuesto/BarraPresupuesto.vue` |
 | F-03 | Temáticas anidables multinivel | ✅ | `GET /categories/tree`, `POST /categories/{id}/move`, `TematicasVista.vue` |
 | F-04 | Fusión de temáticas con reasignación | ✅ | `services/fusion.py`, `POST /categories/merge` (+ `preview` y `undo`) |
@@ -115,7 +116,7 @@ un hogar fijado, solo las 102 de ese hogar.
 ## Comprobado sobre la imagen de despliegue
 
 Todo lo anterior está verificado ejecutando la imagen Docker contra una base de
-datos vacía, no solo con la batería de pruebas (822, todas en verde):
+datos vacía, no solo con la batería de pruebas (873, todas en verde):
 
 - Arranque en 3 s: migraciones aplicadas, 40 tablas, 34 con row level security.
 - Las seis facturas de `ejemplos/` subidas, extraídas y confirmadas **en el orden
@@ -128,6 +129,11 @@ datos vacía, no solo con la batería de pruebas (822, todas en verde):
   compras de entre 40 y 54 €.
 - Manifiesto servido como `application/manifest+json`, assets con caché de un año
   e `index.html` y `sw.js` siempre revalidados.
+- Presupuesto semanal de principio a fin: el hogar pasa a semanas, «yo» empieza a
+  decir `2026-W34`, dos semanas repartidas a 150 reciben cada una su gasto (65 y 90,
+  no 155 las dos), el informe mensual devuelve una fila por semana, cerrar la 33
+  arrastra 85 a la 34 —que queda con 145 disponibles— y un informe mensual al que se
+  le pide una semana contesta 422.
 
 ## Pendientes técnicos
 
