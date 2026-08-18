@@ -44,6 +44,11 @@ class Household(GlobalBase):
     budget_start_day: Mapped[int] = mapped_column(
         SmallInteger, nullable=False, server_default=text("1")
     )
+    #: De cuánto en cuánto se presupuesta: `month` o `week`. Decide los periodos que
+    #: se crean de ahora en adelante; los que ya existen guardan el suyo.
+    budget_granularity: Mapped[str] = mapped_column(
+        String(5), nullable=False, server_default="month"
+    )
     default_rollover_mode: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default="none"
     )
@@ -71,6 +76,7 @@ class Household(GlobalBase):
         # El día 28 como tope hace que el mes presupuestario exista en febrero sin
         # reglas especiales.
         CheckConstraint("budget_start_day BETWEEN 1 AND 28", name="budget_start_day"),
+        CheckConstraint("budget_granularity IN ('month', 'week')", name="budget_granularity"),
         CheckConstraint(
             f"default_rollover_mode {CHECK_MODOS_ARRASTRE}", name="default_rollover_mode"
         ),

@@ -157,16 +157,20 @@ async def sesion(motor: AsyncEngine) -> AsyncIterator[AsyncSession]:
         await sesion.rollback()
 
 
-def crear_app() -> FastAPI:
+def crear_app(extra: tuple[Any, ...] = ()) -> FastAPI:
     """Una aplicación con los routers de este grupo y los manejadores de error.
 
     No se usa `app.main:app` a propósito: el agregador de `app/api/v1/__init__.py`
     lo mantiene otra persona y estas pruebas deben poder ejecutarse antes de que
     registre nada.
+
+    `extra` deja añadir routers de otros grupos a un módulo de pruebas concreto
+    —el presupuesto semanal necesita ajustes, informes y «yo»— sin montarlos para
+    todos los demás ni copiar el andamio entero en otro fichero.
     """
     app = FastAPI()
     registrar_manejadores(app)
-    for modulo in MODULOS:
+    for modulo in (*MODULOS, *extra):
         app.include_router(modulo.router, prefix=RUTA)
     return app
 
@@ -258,9 +262,9 @@ async def entorno(sesion: AsyncSession) -> Entorno:
     )
 
 
-def cliente_de(sesion: AsyncSession, usuario: User) -> AsyncClient:
+def cliente_de(sesion: AsyncSession, usuario: User, *, extra: tuple[Any, ...] = ()) -> AsyncClient:
     """Cliente HTTP con la cookie de sesión y el doble envío de CSRF ya puestos."""
-    app = crear_app()
+    app = crear_app(extra)
 
     async def _sesion() -> AsyncIterator[AsyncSession]:
         yield sesion

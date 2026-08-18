@@ -700,7 +700,7 @@ async def test_deshacer_una_fusion_de_dos_origenes_restaura_el_presupuesto_exact
     primera = await _tematica_api(cliente, "Compra semanal")
     segunda = await _tematica_api(cliente, "Compra del mes")
 
-    periodo = BudgetPeriod(household_id=hogar, period_month=date(HOY.year, HOY.month, 1))
+    periodo = BudgetPeriod(household_id=hogar, period_start=date(HOY.year, HOY.month, 1))
     sesion_bd.add(periodo)
     await sesion_bd.flush()
     for tematica, importe in ((destino, "320.00"), (primera, "180.00"), (segunda, "60.00")):
@@ -806,7 +806,7 @@ async def test_la_previa_no_cuenta_dos_veces_lo_asignado_del_destino(
     primera = await _tematica_api(cliente, "Compra semanal")
     segunda = await _tematica_api(cliente, "Compra del mes")
 
-    periodo = BudgetPeriod(household_id=hogar, period_month=date(HOY.year, HOY.month, 1))
+    periodo = BudgetPeriod(household_id=hogar, period_start=date(HOY.year, HOY.month, 1))
     sesion_bd.add(periodo)
     await sesion_bd.flush()
     for tematica, importe in ((destino, "320.00"), (primera, "180.00"), (segunda, "60.00")):

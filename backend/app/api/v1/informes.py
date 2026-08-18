@@ -13,7 +13,6 @@ que en `productos.py`.
 
 from __future__ import annotations
 
-import calendar
 import csv
 import hashlib
 import io
@@ -27,7 +26,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import Select, column, func, select, table
+from sqlalchemy import DateTime, Select, cast, column, func, select, table, text
 
 from app.api.deps import Alcance, AlcanceHogar, verificar_csrf
 from app.api.v1.productos import (
@@ -100,6 +99,13 @@ from app.schemas.transaccion import TransaccionRespuesta
 from app.services import anomalias as anomalias_servicio
 from app.services import precios
 from app.services.formato import CENTIMO, CUATRO_DECIMALES, cuantizar, porcentaje
+from app.services.presupuesto import (
+    Granularidad,
+    fin_de,
+    inicio_de,
+    periodo_de,
+    periodo_siguiente,
+)
 from app.services.recurrencia import Frecuencia as FrecuenciaMotor
 
 router = APIRouter(dependencies=[Depends(verificar_csrf)])
@@ -165,31 +171,24 @@ SALDOS = table(
 # --------------------------------------------------------------------------- #
 
 
-def periodo_de(fecha: date) -> str:
-    return f"{fecha.year:04d}-{fecha.month:02d}"
-
-
-def inicio_de(periodo: str) -> date:
-    anyo, mes = (int(parte) for parte in periodo.split("-"))
-    return date(anyo, mes, 1)
-
-
-def fin_de(periodo: str) -> date:
-    anyo, mes = (int(parte) for parte in periodo.split("-"))
-    return date(anyo, mes, calendar.monthrange(anyo, mes)[1])
+# `periodo_de`, `inicio_de` y `fin_de` vienen del servicio de presupuesto, que es
+# donde vive la aritmética de los periodos. Aquí estaban duplicados, y la copia se
+# quedó atrás cuando el periodo dejó de ser siempre un mes: acabar con la copia es
+# parte del arreglo, no limpieza de paso.
 
 
 def periodos_entre(desde: str, hasta: str) -> list[str]:
+    """Los periodos de `desde` a `hasta`, los dos incluidos.
+
+    Avanza con `periodo_siguiente()`, así que sirve igual para meses que para
+    semanas; los informes solo le pasan meses, porque su ventana es mensual.
+    """
     lista: list[str] = []
-    actual = inicio_de(desde)
+    actual = desde
     limite = inicio_de(hasta)
-    while actual <= limite and len(lista) < 600:
-        lista.append(periodo_de(actual))
-        actual = (
-            date(actual.year + 1, 1, 1)
-            if actual.month == 12
-            else date(actual.year, actual.month + 1, 1)
-        )
+    while inicio_de(actual) <= limite and len(lista) < 600:
+        lista.append(actual)
+        actual = periodo_siguiente(actual)
     return lista
 
 
@@ -380,8 +379,10 @@ async def _asignado(alcance: AlcanceHogar, rango: Rango) -> dict[uuidlib.UUID, D
             .join(BudgetPeriod, BudgetPeriod.id == BudgetAllocation.budget_period_id)
             .where(
                 BudgetAllocation.household_id == alcance.household_id,
-                BudgetPeriod.period_month >= inicio_de(rango.periodo_desde),
-                BudgetPeriod.period_month <= inicio_de(rango.periodo_hasta),
+                BudgetPeriod.period_start >= inicio_de(rango.periodo_desde),
+                # Hasta el final del último mes: una semana que empieza el 24 de
+                # agosto es de agosto, y con el día 1 como tope se quedaba fuera.
+                BudgetPeriod.period_start <= fin_de(rango.periodo_hasta),
             )
             .group_by(BudgetAllocation.category_id)
         )
@@ -899,35 +900,44 @@ async def presupuesto_vs_real(
     asignaciones = (
         await alcance.sesion.execute(
             select(
-                BudgetPeriod.period_month,
+                BudgetPeriod.period_start,
+                BudgetPeriod.granularity,
                 BudgetAllocation.category_id,
                 BudgetAllocation.allocated_amount + BudgetAllocation.carryover_in,
             )
             .join(BudgetPeriod, BudgetPeriod.id == BudgetAllocation.budget_period_id)
             .where(
                 BudgetAllocation.household_id == alcance.household_id,
-                BudgetPeriod.period_month >= inicio_de(rango.periodo_desde),
-                BudgetPeriod.period_month <= inicio_de(rango.periodo_hasta),
+                BudgetPeriod.period_start >= inicio_de(rango.periodo_desde),
+                BudgetPeriod.period_start <= fin_de(rango.periodo_hasta),
             )
         )
     ).all()
     base = _gasto(alcance.household_id, rango).subquery()
-    gastado = {
-        (periodo_de(fila[0]), fila[1]): cuantizar(Decimal(fila[2]))
-        for fila in (
+
+    # El gasto se agrupa con la misma unidad con la que se presupuestó, y no con la
+    # columna `period_month` de la vista, que es siempre el mes del movimiento. Con
+    # periodos semanales, cada una de las cinco semanas de agosto se comparaba contra
+    # el gasto de agosto entero y todas salían sobrepasadas.
+    gastado: dict[tuple[str, uuidlib.UUID], Decimal] = {}
+    for granularidad in sorted({fila[1] for fila in asignaciones}):
+        inicio_col = func.date_trunc(granularidad, cast(base.c.booked_on, DateTime)).label("inicio")
+        filas_gasto = (
             await alcance.sesion.execute(
-                select(base.c.period_month, base.c.category_id, func.sum(base.c.spent)).group_by(
-                    base.c.period_month, base.c.category_id
+                select(inicio_col, base.c.category_id, func.sum(base.c.spent)).group_by(
+                    text("inicio"), base.c.category_id
                 )
             )
         ).all()
-    }
+        for fila_gasto in filas_gasto:
+            clave = (periodo_de(fila_gasto[0].date(), Granularidad(granularidad)), fila_gasto[1])
+            gastado[clave] = cuantizar(Decimal(fila_gasto[2]))
 
     filas: list[PresupuestoVsRealFilaRespuesta] = []
-    for periodo_mes, category_id, importe in asignaciones:
+    for inicio_periodo, granularidad, category_id, importe in asignaciones:
         if category_id not in arbol:
             continue
-        periodo = periodo_de(periodo_mes)
+        periodo = periodo_de(inicio_periodo, Granularidad(granularidad))
         asignado = cuantizar(Decimal(importe))
         real = gastado.get((periodo, category_id), CERO)
         sobrepasa = real > asignado

@@ -130,7 +130,7 @@ async def _sembrar_hogar(ejecutor: AsyncConnection | AsyncSession, etiqueta: str
     )
     await ejecutor.execute(
         text(
-            "INSERT INTO budget_periods (id, household_id, period_month) "
+            "INSERT INTO budget_periods (id, household_id, period_start) "
             "VALUES (CAST(:id AS uuid), CAST(:hogar AS uuid), DATE '2026-08-01')"
         ),
         {"id": str(periodo), "hogar": str(hogar)},
@@ -379,7 +379,7 @@ async def test_insert_de_un_hogar_ajeno_lo_rechaza_la_politica(
             async with conexion.begin_nested():
                 await conexion.execute(
                     text(
-                        "INSERT INTO budget_periods (id, household_id, period_month) "
+                        "INSERT INTO budget_periods (id, household_id, period_start) "
                         "VALUES (gen_random_uuid(), CAST(:hogar AS uuid), DATE '2026-09-01')"
                     ),
                     {"hogar": str(hogares.b)},

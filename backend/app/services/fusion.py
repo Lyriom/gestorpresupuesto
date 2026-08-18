@@ -690,12 +690,15 @@ async def _periodos_cerrados(
     filas = await sesion.execute(
         text(
             """
-            SELECT to_char(p.period_month, 'YYYY-MM') AS periodo
+            SELECT CASE p.granularity
+                     WHEN 'week' THEN to_char(p.period_start, 'IYYY-"W"IW')
+                     ELSE to_char(p.period_start, 'YYYY-MM')
+                   END AS periodo
               FROM budget_allocations s
               JOIN budget_periods p ON p.id = s.budget_period_id
              WHERE s.household_id = :hogar AND s.category_id = :origen
                AND p.closed_at IS NOT NULL
-             ORDER BY p.period_month
+             ORDER BY p.period_start
             """
         ),
         {"hogar": hogar, "origen": origen},

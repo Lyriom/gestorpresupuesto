@@ -15,7 +15,7 @@ from app.schemas.comun import (
     ImporteStr,
     Nombre,
     ParametrosBusqueda,
-    Periodo,
+    PeriodoPresupuesto,
     Peticion,
     Respuesta,
     RespuestaSellada,
@@ -231,7 +231,9 @@ class CategoriaFiltro(ParametrosBusqueda):
     kind: TipoTematica | None = None
     max_depth: int | None = Field(default=None, ge=1, le=PROFUNDIDAD_MAXIMA)
     is_archived: bool | None = None
-    period: Periodo | None = Field(
+    #: Presupuestario, así que admite semana: la pantalla de Temáticas enseña lo
+    #: gastado y lo asignado del periodo que se esté mirando, sea cual sea.
+    period: PeriodoPresupuesto | None = Field(
         default=None, description="Trae `spent` y `allocated` de ese periodo."
     )
     include: list[Literal["stats"]] = Field(default=[])

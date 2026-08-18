@@ -33,6 +33,17 @@ class ArrastreNegativo(StrEnum):
     RESET = "reset"  # se deja a cero
 
 
+class GranularidadPresupuesto(StrEnum):
+    """De cuánto en cuánto se reparte el dinero.
+
+    Cambiarlo **no reinterpreta lo ya guardado**: cada periodo recuerda si era un mes
+    o una semana. Decide los que se crean a partir de ahora y qué enseña la interfaz.
+    """
+
+    MES = "month"
+    SEMANA = "week"
+
+
 class PeriodicidadDigest(StrEnum):
     OFF = "off"
     WEEKLY = "weekly"
@@ -44,6 +55,7 @@ class AjustesRespuesta(Respuesta):
     locale: str
     timezone: str
     first_day_of_week: int = Field(ge=0, le=6)
+    budget_granularity: GranularidadPresupuesto
     theme: Tema
     rollover_default: bool
     rollover_negative: ArrastreNegativo
@@ -62,6 +74,7 @@ class AjustesActualizar(Actualizacion):
     locale: str | None = Field(default=None, max_length=10)
     timezone: str | None = Field(default=None, max_length=64)
     first_day_of_week: int | None = Field(default=None, ge=0, le=6)
+    budget_granularity: GranularidadPresupuesto | None = None
     theme: Tema | None = None
     rollover_default: bool | None = None
     rollover_negative: ArrastreNegativo | None = None

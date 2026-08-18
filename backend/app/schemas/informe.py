@@ -24,6 +24,7 @@ from app.schemas.comun import (
     ImporteStr,
     ParametrosListado,
     Periodo,
+    PeriodoPresupuesto,
     PrecioStr,
     Respuesta,
 )
@@ -211,7 +212,10 @@ class PatrimonioFiltro(ParametrosInforme):
 
 
 class PresupuestoVsRealFilaRespuesta(Respuesta):
-    period: Periodo
+    #: La ventana que se pide es mensual, pero cada fila lleva **su** periodo: si el
+    #: hogar presupuesta por semanas, un agosto trae cinco filas por temática, una por
+    #: semana, y no una fila mensual que no existe en ninguna parte.
+    period: PeriodoPresupuesto
     category: CategoriaRefRespuesta
     allocated: ImporteStr
     spent: ImporteStr

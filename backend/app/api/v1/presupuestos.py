@@ -15,7 +15,6 @@ entre cuentas propias no puede aparecer como gasto en la barra.
 
 from __future__ import annotations
 
-import calendar
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -23,7 +22,7 @@ from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy import func, select, text
+from sqlalchemy import DateTime, cast, func, select, text
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import (
@@ -33,6 +32,7 @@ from app.api.deps import (
     PaginacionActual,
     verificar_csrf,
 )
+from app.api.v1.cuentas import moneda_del_hogar_actual
 from app.api.v1.transacciones import contexto_de, respuesta_transaccion, tematica_del_hogar
 from app.core.errors import AppError, Conflicto, NoEncontrado, ReglaDeNegocio
 from app.models.categoria import Category
@@ -59,9 +59,15 @@ from app.services.presupuesto import (
     CERO,
     EntradaCategoria,
     ErrorPresupuesto,
+    Granularidad,
     calcular_arrastre,
     calcular_barra,
+    dias_de,
+    fin_de,
+    granularidad_de,
+    inicio_de,
     periodo_anterior,
+    periodo_de,
     periodo_siguiente,
     reasignar,
     reparto_sugerido,
@@ -74,8 +80,10 @@ from app.services.presupuesto import (
 # hace nada en GET, HEAD ni OPTIONS: así no se puede olvidar en un endpoint.
 router = APIRouter(tags=["budgets"], dependencies=[Depends(verificar_csrf)])
 
-#: Tope del recálculo en cascada al reabrir un periodo: diez años de meses.
-MAXIMO_CASCADA = 120
+#: Tope del recálculo en cascada al reabrir un periodo: diez años, contados en la
+#: unidad que toque. Es un cortacircuitos contra un bucle infinito, no una regla de
+#: negocio; con un solo número, diez años de meses se quedaban en dos de semanas.
+MAXIMO_CASCADA = {Granularidad.MES: 120, Granularidad.SEMANA: 522}
 
 #: Modos de arrastre de `households.default_rollover_mode` (F-26).
 SIN_ARRASTRE = "none"
@@ -101,20 +109,22 @@ def periodo_valido(periodo: str) -> str:
 
 
 def primer_dia(periodo: str) -> date:
-    anyo, mes = (int(parte) for parte in periodo_valido(periodo).split("-"))
-    return date(anyo, mes, 1)
+    """El primer día del periodo, validándolo antes para dar un 422 y no un 500."""
+    return inicio_de(periodo_valido(periodo))
 
 
 def rango_de(periodo: str) -> tuple[date, date]:
     """Primer y último día del periodo, ambos inclusive."""
-    inicio = primer_dia(periodo)
-    return inicio, date(
-        inicio.year, inicio.month, calendar.monthrange(inicio.year, inicio.month)[1]
-    )
+    return primer_dia(periodo), fin_de(periodo)
 
 
-def periodo_de(fecha: date) -> str:
-    return f"{fecha.year:04d}-{fecha.month:02d}"
+def periodo_de_fila(fila: BudgetPeriod) -> str:
+    """El nombre del periodo de una fila, con la granularidad que guarda ella.
+
+    No se deduce del ajuste del hogar: un periodo semanal sigue siendo semanal
+    aunque el hogar haya vuelto a presupuestar por meses.
+    """
+    return periodo_de(fila.period_start, Granularidad(fila.granularity))
 
 
 async def _periodo(alcance: AlcanceHogar, periodo: str) -> BudgetPeriod | None:
@@ -122,18 +132,25 @@ async def _periodo(alcance: AlcanceHogar, periodo: str) -> BudgetPeriod | None:
         await alcance.sesion.execute(
             select(BudgetPeriod).where(
                 BudgetPeriod.household_id == alcance.household_id,
-                BudgetPeriod.period_month == primer_dia(periodo),
+                BudgetPeriod.period_start == primer_dia(periodo),
+                # El 1 de junio de 2026 es lunes: sin esto, pedir la semana 23
+                # devolvería el mes de junio.
+                BudgetPeriod.granularity == granularidad_de(periodo).value,
             )
         )
     ).scalar_one_or_none()
 
 
 async def _periodo_asegurado(alcance: AlcanceHogar, periodo: str) -> BudgetPeriod:
-    """El periodo, creándolo si es la primera vez que se toca ese mes."""
+    """El periodo, creándolo si es la primera vez que se toca."""
     fila = await _periodo(alcance, periodo)
     if fila is not None:
         return fila
-    fila = BudgetPeriod(household_id=alcance.household_id, period_month=primer_dia(periodo))
+    fila = BudgetPeriod(
+        household_id=alcance.household_id,
+        period_start=primer_dia(periodo),
+        granularity=granularidad_de(periodo).value,
+    )
     alcance.sesion.add(fila)
     await alcance.sesion.flush()
     return fila
@@ -199,7 +216,7 @@ async def ingresos_reales(alcance: AlcanceHogar, desde: date, hasta: date) -> De
 
 @dataclass(slots=True)
 class DatosBarra:
-    """Lo que hace falta para pintar el mes, ya leído de la base."""
+    """Lo que hace falta para pintar el periodo, ya leído de la base."""
 
     periodo: str
     fila: BudgetPeriod | None
@@ -207,6 +224,7 @@ class DatosBarra:
     tematicas: dict[uuid.UUID, Category]
     gastado: dict[uuid.UUID, Decimal]
     ingreso_real: Decimal
+    moneda: str
 
     @property
     def ingreso(self) -> Decimal:
@@ -256,6 +274,7 @@ async def _leer_barra(
         tematicas=tematicas,
         gastado={k: v for k, v in gastado.items() if k in tematicas},
         ingreso_real=await ingresos_reales(alcance, desde, hasta),
+        moneda=await moneda_del_hogar_actual(alcance),
     )
 
 
@@ -283,13 +302,20 @@ def _entradas_de(datos: DatosBarra, profundidad: int | None) -> list[EntradaCate
     return entradas
 
 
-def _dia_del_mes(periodo: str, hoy: date) -> tuple[int, int]:
-    """Día que se pinta como «hoy» en la barra y días del mes."""
+def _dia_del_periodo(periodo: str, hoy: date) -> tuple[int, int]:
+    """Día que se pinta como «hoy» en la barra y días que tiene el periodo.
+
+    Se cuenta desde el arranque del periodo y no por el día del mes: en una semana
+    que empieza el 10 de agosto, el día 13 es el cuarto de siete, no el trece de
+    siete. Para un mes las dos cuentas coinciden, que es por lo que no se notaba.
+    """
     inicio, fin = rango_de(periodo)
-    dias = fin.day
-    if inicio <= hoy <= fin:
-        return hoy.day, dias
-    return (dias, dias) if hoy > fin else (1, dias)
+    dias = dias_de(periodo)
+    if hoy < inicio:
+        return 1, dias
+    if hoy > fin:
+        return dias, dias
+    return (hoy - inicio).days + 1, dias
 
 
 def _a_respuesta_barra(datos: DatosBarra, profundidad: int | None) -> PresupuestoRespuesta:
@@ -331,11 +357,11 @@ def _a_respuesta_barra(datos: DatosBarra, profundidad: int | None) -> Presupuest
         else:
             raiz.append(asignaciones[categoria_id])
 
-    dia, dias = _dia_del_mes(datos.periodo, date.today())
+    dia, dias = _dia_del_periodo(datos.periodo, date.today())
     fila = datos.fila
     return PresupuestoRespuesta(
         period=datos.periodo,
-        currency="EUR",
+        currency=datos.moneda,
         is_closed=bool(fila and fila.closed_at),
         closed_at=fila.closed_at if fila else None,
         income_actual=datos.ingreso_real,
@@ -346,8 +372,8 @@ def _a_respuesta_barra(datos: DatosBarra, profundidad: int | None) -> Presupuest
         unassigned=barra.sin_asignar,
         overallocated=-barra.sin_asignar if barra.sin_asignar < CERO else CERO,
         rollover_in_total=barra.total_arrastrado,
-        day_of_month=dia,
-        days_in_month=dias,
+        day_of_period=dia,
+        days_in_period=dias,
         allocations=raiz,
         warnings=barra.avisos,
         note=fila.note if fila else None,
@@ -528,7 +554,7 @@ async def _escribir_arrastre(alcance: AlcanceHogar, periodo: str, *, aplicar: bo
 async def _recalcular_cascada(alcance: AlcanceHogar, desde: str) -> None:
     """Recalcula el arrastre de `desde` hacia adelante (RN-33, al reabrir)."""
     actual = desde
-    for _ in range(MAXIMO_CASCADA):
+    for _ in range(MAXIMO_CASCADA[granularidad_de(desde)]):
         fila = await _periodo(alcance, actual)
         if fila is None:
             return
@@ -548,9 +574,12 @@ async def listar_periodos(
 ) -> Pagina[PresupuestoResumenRespuesta]:
     consulta = select(BudgetPeriod).where(BudgetPeriod.household_id == alcance.household_id)
     if filtro.period_from:
-        consulta = consulta.where(BudgetPeriod.period_month >= primer_dia(filtro.period_from))
+        consulta = consulta.where(BudgetPeriod.period_start >= primer_dia(filtro.period_from))
     if filtro.period_to:
-        consulta = consulta.where(BudgetPeriod.period_month <= primer_dia(filtro.period_to))
+        # Hasta el **final** del periodo pedido, no hasta su primer día: si no, pedir
+        # «hasta 2026-08» dejaría fuera todas las semanas de agosto menos la primera.
+        hasta = fin_de(periodo_valido(filtro.period_to))
+        consulta = consulta.where(BudgetPeriod.period_start <= hasta)
 
     total = int(
         await alcance.sesion.scalar(
@@ -560,7 +589,7 @@ async def listar_periodos(
     )
     descendente = ("period", True) in filtro.orden or not filtro.orden
     consulta = consulta.order_by(
-        BudgetPeriod.period_month.desc() if descendente else BudgetPeriod.period_month.asc()
+        BudgetPeriod.period_start.desc() if descendente else BudgetPeriod.period_start.asc()
     )
     filas = list(
         (await alcance.sesion.execute(consulta.offset(filtro.desplazamiento).limit(filtro.size)))
@@ -583,48 +612,74 @@ async def listar_periodos(
             )
         ).all()
     )
-    inicio = min(f.period_month for f in filas)
-    fin = rango_de(periodo_de(max(f.period_month for f in filas)))[1]
-    gastos = await alcance.sesion.execute(
-        text(
-            """
-            SELECT m.period_month, COALESCE(SUM(m.spent), 0)::numeric(14,2) AS gastado
-              FROM vw_movement_lines m
-              JOIN categories c ON c.id = m.category_id
-             WHERE m.household_id = :hogar AND m.booked_on BETWEEN :desde AND :hasta
-               AND m.kind <> 'transfer' AND NOT m.excluded_from_reports
-               AND c.kind = 'expense'
-             GROUP BY m.period_month
-            """
-        ),
-        {"hogar": alcance.household_id, "desde": inicio, "hasta": fin},
-    )
-    por_mes = {fila.period_month: Decimal(fila.gastado) for fila in gastos}
-    ingresos = await alcance.sesion.execute(
-        select(
-            func.date_trunc("month", Transaction.booked_on).label("mes"),
-            func.coalesce(func.sum(Transaction.amount), 0).label("total"),
+    inicio = min(f.period_start for f in filas)
+    fin = max(fin_de(periodo_de_fila(f)) for f in filas)
+
+    # El gasto y el ingreso se agrupan por el arranque del periodo al que cae cada
+    # movimiento. `date_trunc` sirve para las dos granularidades sin enumerar casos:
+    # da el día 1 del mes o el lunes de la semana, que es justo lo que guarda
+    # `period_start`. Una consulta por granularidad presente en la página, que es una
+    # sola salvo justo después de cambiar el ajuste del hogar.
+    #
+    # Antes se usaba la columna `period_month` de la vista, que es siempre el mes del
+    # movimiento: con periodos semanales todas las semanas de agosto habrían recibido
+    # el gasto de agosto entero.
+    gastado_por_periodo: dict[tuple[str, date], Decimal] = {}
+    ingreso_por_periodo: dict[tuple[str, date], Decimal] = {}
+    for granularidad in sorted({f.granularity for f in filas}):
+        gastos = await alcance.sesion.execute(
+            text(
+                """
+                SELECT date_trunc(:unidad, m.booked_on::timestamp)::date AS inicio,
+                       COALESCE(SUM(m.spent), 0)::numeric(14,2) AS gastado
+                  FROM vw_movement_lines m
+                  JOIN categories c ON c.id = m.category_id
+                 WHERE m.household_id = :hogar AND m.booked_on BETWEEN :desde AND :hasta
+                   AND m.kind <> 'transfer' AND NOT m.excluded_from_reports
+                   AND c.kind = 'expense'
+                 GROUP BY 1
+                """
+            ),
+            {
+                "hogar": alcance.household_id,
+                "desde": inicio,
+                "hasta": fin,
+                "unidad": granularidad,
+            },
         )
-        .where(
-            Transaction.household_id == alcance.household_id,
-            Transaction.kind == TipoMovimiento.INCOME.value,
-            Transaction.booked_on.between(inicio, fin),
-            Transaction.excluded_from_reports.is_(False),
+        for fila_gasto in gastos:
+            gastado_por_periodo[(granularidad, fila_gasto.inicio)] = Decimal(fila_gasto.gastado)
+
+        ingresos = await alcance.sesion.execute(
+            select(
+                func.date_trunc(granularidad, cast(Transaction.booked_on, DateTime)).label(
+                    "inicio"
+                ),
+                func.coalesce(func.sum(Transaction.amount), 0).label("total"),
+            )
+            .where(
+                Transaction.household_id == alcance.household_id,
+                Transaction.kind == TipoMovimiento.INCOME.value,
+                Transaction.booked_on.between(inicio, fin),
+                Transaction.excluded_from_reports.is_(False),
+            )
+            .group_by(text("inicio"))
         )
-        .group_by(text("mes"))
-    )
-    ingreso_por_mes = {fila.mes.date(): Decimal(fila.total) for fila in ingresos}
+        for fila_ingreso in ingresos:
+            ingreso_por_periodo[(granularidad, fila_ingreso.inicio.date())] = Decimal(
+                fila_ingreso.total
+            )
 
     items = [
         PresupuestoResumenRespuesta(
-            period=periodo_de(fila.period_month),
+            period=periodo_de_fila(fila),
             income=(
                 fila.expected_income
                 if fila.expected_income is not None
-                else ingreso_por_mes.get(fila.period_month, CERO)
+                else ingreso_por_periodo.get((fila.granularity, fila.period_start), CERO)
             ),
             allocated_total=Decimal(asignado.get(fila.id, 0)),
-            spent_total=por_mes.get(fila.period_month, CERO),
+            spent_total=gastado_por_periodo.get((fila.granularity, fila.period_start), CERO),
             is_closed=fila.closed_at is not None,
         )
         for fila in filas
@@ -997,7 +1052,11 @@ async def cerrar_periodo(alcance: AlcanceEscritura, periodo: str) -> Presupuesto
     """RN-33: idempotente. Cerrarlo dos veces no duplica nada."""
     periodo = periodo_valido(periodo)
     hoy = date.today()
-    if primer_dia(periodo) > date(hoy.year, hoy.month, 1):
+    # Se compara el arranque del periodo con **hoy**, no con el día 1 del mes en
+    # curso: para un mes es lo mismo —solo rechaza los que empiezan más adelante—,
+    # pero la semana que empezó el lunes pasado arranca un día 10 y con la
+    # comparación vieja parecía del futuro.
+    if inicio_de(periodo) > hoy:
         raise ReglaDeNegocio("No se puede cerrar un periodo que aún no ha empezado.")
 
     fila = await _periodo_asegurado(alcance, periodo)

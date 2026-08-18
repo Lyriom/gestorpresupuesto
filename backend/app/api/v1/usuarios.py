@@ -24,6 +24,7 @@ from app.api.deps import (
 )
 from app.api.v1.auth import (
     exigir_cuota,
+    granularidad_del_hogar,
     moneda_del_hogar,
     usuario_respuesta,
     yo_respuesta,
@@ -103,7 +104,9 @@ async def editar_perfil(
         moneda = await _cambiar_divisa_del_hogar(sesion, usuario, cambios["currency"])
 
     await sesion.commit()
-    return await usuario_respuesta(sesion, usuario, moneda)
+    return await usuario_respuesta(
+        sesion, usuario, moneda, await granularidad_del_hogar(sesion, usuario)
+    )
 
 
 async def _cambiar_divisa_del_hogar(sesion: Sesion, usuario: User, moneda: str) -> str:

@@ -1,15 +1,23 @@
-"""Cálculo de la barra de presupuesto del mes.
+"""Cálculo de la barra de presupuesto del periodo.
 
-Es el corazón de la pantalla principal: los ingresos del mes se reparten entre
-temáticas y la barra muestra cuánto se ha asignado, cuánto se ha gastado y
+Es el corazón de la pantalla principal: los ingresos del periodo se reparten
+entre temáticas y la barra muestra cuánto se ha asignado, cuánto se ha gastado y
 cuánto queda sin repartir. Todo el cálculo vive aquí, en funciones puras, para
 que la API y los informes den siempre el mismo número.
+
+Un periodo es un mes (`2026-08`) o una semana (`2026-W33`). La aritmética de los
+dos vive en este módulo y en ningún otro sitio: `inicio_de()`, `fin_de()`,
+`periodo_anterior()` y `periodo_siguiente()` son las que saben si hay que sumar
+un mes o siete días, y todo lo demás —la barra, el arrastre, los routers— trabaja
+con las fechas que devuelven sin volver a mirar la forma de la cadena.
 """
 
 from __future__ import annotations
 
+import calendar
 import re
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 
@@ -17,7 +25,28 @@ from app.services.formato import CENTIMO, cuantizar, dinero
 
 CERO = Decimal("0.00")
 
-PATRON_PERIODO = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])$")
+PATRON_MES = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])$")
+
+#: Las semanas van de la 01 a la 53 porque hay años ISO de 53 semanas. Que el año
+#: concreto tenga la que se pide lo comprueba `inicio_de()` con el calendario, que
+#: es quien lo sabe de verdad; la expresión regular solo descarta lo imposible.
+PATRON_SEMANA = re.compile(r"^(\d{4})-W(0[1-9]|[1-4]\d|5[0-3])$")
+
+
+class Granularidad(StrEnum):
+    """De cuánto en cuánto se presupuesta.
+
+    La semana es **la semana ISO, de lunes a domingo**, y no una semana que empiece
+    el día que diga `first_day_of_week`. Es la que entiende `date.fromisocalendar()`,
+    la que devuelve `date_trunc('week', …)` de PostgreSQL —donde vive la restricción
+    que garantiza que un periodo semanal empieza en lunes— y la que ya usaba el
+    informe de flujo de caja para agrupar por semanas. Con una sola definición los
+    tres coinciden sin convertir nada; con dos, el presupuesto de una semana y el
+    gasto de esa misma semana podrían no cuadrar por un día.
+    """
+
+    MES = "month"
+    SEMANA = "week"
 
 
 class EstadoSegmento(StrEnum):
@@ -40,23 +69,87 @@ class ErrorPresupuesto(Exception):
     """La operación sobre el presupuesto no es válida."""
 
 
-def validar_periodo(periodo: str) -> str:
-    """Comprueba que el periodo tenga la forma `AAAA-MM`."""
-    if not PATRON_PERIODO.match(periodo or ""):
+def granularidad_de(periodo: str) -> Granularidad:
+    """Qué clase de periodo es, deducido de su forma.
+
+    La granularidad no se pasa por parámetro a todas partes: va dentro de la propia
+    cadena. Así un `2026-W33` guardado hace meses sigue significando una semana
+    aunque el hogar haya vuelto a presupuestar por meses, y ninguna consulta tiene
+    que acordarse de mirar un ajuste para interpretar lo que ya está guardado.
+    """
+    if PATRON_MES.match(periodo or ""):
+        return Granularidad.MES
+    if PATRON_SEMANA.match(periodo or ""):
+        return Granularidad.SEMANA
+    raise ErrorPresupuesto(
+        f"El periodo '{periodo}' no es válido. Debe tener el formato AAAA-MM "
+        f"para un mes o AAAA-Wss para una semana."
+    )
+
+
+def inicio_de(periodo: str) -> date:
+    """El primer día del periodo: el 1 del mes o el lunes de la semana."""
+    if granularidad_de(periodo) is Granularidad.MES:
+        anyo, mes = (int(parte) for parte in periodo.split("-"))
+        return date(anyo, mes, 1)
+    anyo, semana = (int(parte) for parte in periodo.split("-W"))
+    try:
+        return date.fromisocalendar(anyo, semana, 1)
+    except ValueError as exc:
         raise ErrorPresupuesto(
-            f"El periodo '{periodo}' no es válido. Debe tener el formato AAAA-MM."
-        )
+            f"El periodo '{periodo}' no existe: {anyo} no tiene semana {semana}."
+        ) from exc
+
+
+def fin_de(periodo: str) -> date:
+    """El último día del periodo, incluido."""
+    inicio = inicio_de(periodo)
+    if granularidad_de(periodo) is Granularidad.MES:
+        return date(inicio.year, inicio.month, calendar.monthrange(inicio.year, inicio.month)[1])
+    return inicio + timedelta(days=6)
+
+
+def rango_de(periodo: str) -> tuple[date, date]:
+    """Primer y último día del periodo, ambos incluidos."""
+    return inicio_de(periodo), fin_de(periodo)
+
+
+def dias_de(periodo: str) -> int:
+    inicio, fin = rango_de(periodo)
+    return (fin - inicio).days + 1
+
+
+def periodo_de(fecha: date, granularidad: Granularidad = Granularidad.MES) -> str:
+    """El periodo al que pertenece una fecha.
+
+    El año de una semana ISO es el suyo, no el del calendario: el 31 de diciembre
+    de 2025 cae en la primera semana de 2026, así que devuelve `2026-W01`. Sale de
+    `isocalendar()`, que ya lo resuelve.
+    """
+    if granularidad is Granularidad.MES:
+        return f"{fecha.year:04d}-{fecha.month:02d}"
+    anyo, semana, _ = fecha.isocalendar()
+    return f"{anyo:04d}-W{semana:02d}"
+
+
+def validar_periodo(periodo: str) -> str:
+    """Comprueba que el periodo exista, no solo que tenga la forma buena."""
+    inicio_de(periodo)
     return periodo
 
 
 def periodo_anterior(periodo: str) -> str:
-    validar_periodo(periodo)
+    granularidad = granularidad_de(periodo)
+    if granularidad is Granularidad.SEMANA:
+        return periodo_de(inicio_de(periodo) - timedelta(days=7), granularidad)
     anyo, mes = (int(parte) for parte in periodo.split("-"))
     return f"{anyo - 1}-12" if mes == 1 else f"{anyo}-{mes - 1:02d}"
 
 
 def periodo_siguiente(periodo: str) -> str:
-    validar_periodo(periodo)
+    granularidad = granularidad_de(periodo)
+    if granularidad is Granularidad.SEMANA:
+        return periodo_de(fin_de(periodo) + timedelta(days=1), granularidad)
     anyo, mes = (int(parte) for parte in periodo.split("-"))
     return f"{anyo + 1}-01" if mes == 12 else f"{anyo}-{mes + 1:02d}"
 

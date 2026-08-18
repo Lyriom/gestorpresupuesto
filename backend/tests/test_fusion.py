@@ -66,7 +66,7 @@ async def _tematica(cliente_http: AsyncClient, nombre: str, madre: str | None = 
 
 
 async def _periodo(sesion: AsyncSession, hogar: uuid.UUID, mes: date) -> BudgetPeriod:
-    periodo = BudgetPeriod(household_id=hogar, period_month=mes)
+    periodo = BudgetPeriod(household_id=hogar, period_start=mes)
     sesion.add(periodo)
     await sesion.flush()
     return periodo
@@ -375,13 +375,13 @@ async def gasto_por_mes(sesion: AsyncSession, hogar: uuid.UUID) -> dict[date, De
 async def asignado_por_mes(sesion: AsyncSession, hogar: uuid.UUID) -> dict[date, Decimal]:
     filas = await sesion.execute(
         text(
-            "SELECT p.period_month, sum(a.allocated_amount) AS total "
+            "SELECT p.period_start, sum(a.allocated_amount) AS total "
             "  FROM budget_allocations a JOIN budget_periods p ON p.id = a.budget_period_id "
-            " WHERE a.household_id = :hogar GROUP BY p.period_month ORDER BY p.period_month"
+            " WHERE a.household_id = :hogar GROUP BY p.period_start ORDER BY p.period_start"
         ),
         {"hogar": hogar},
     )
-    return {fila.period_month: Decimal(str(fila.total)) for fila in filas}
+    return {fila.period_start: Decimal(str(fila.total)) for fila in filas}
 
 
 async def saldos(sesion: AsyncSession, hogar: uuid.UUID) -> dict[uuid.UUID, Decimal]:
@@ -501,19 +501,19 @@ async def test_fusion_suma_los_presupuestos_del_mismo_periodo(
     filas = (
         await sesion_bd.execute(
             text(
-                "SELECT p.period_month, a.category_id, a.allocated_amount, a.carryover_in, "
+                "SELECT p.period_start, a.category_id, a.allocated_amount, a.carryover_in, "
                 "       a.rollover_mode, a.is_locked, a.note, a.source "
                 "  FROM budget_allocations a "
                 "  JOIN budget_periods p ON p.id = a.budget_period_id "
-                " WHERE a.household_id = :hogar ORDER BY p.period_month"
+                " WHERE a.household_id = :hogar ORDER BY p.period_start"
             ),
             {"hogar": hogar},
         )
     ).all()
-    por_mes = {fila.period_month: fila for fila in filas}
+    por_mes = {fila.period_start: fila for fila in filas}
 
     # Enero: una sola asignación, con los dos importes sumados.
-    assert len([f for f in filas if f.period_month == ENERO]) == 1
+    assert len([f for f in filas if f.period_start == ENERO]) == 1
     enero = por_mes[ENERO]
     assert str(enero.category_id) == destino["id"]
     assert enero.allocated_amount == Decimal("500.00")
@@ -739,7 +739,7 @@ async def test_un_periodo_cerrado_bloquea_salvo_force(
     await sesion_bd.execute(
         text(
             "UPDATE budget_periods SET closed_at = now() "
-            " WHERE household_id = :hogar AND period_month = :mes"
+            " WHERE household_id = :hogar AND period_start = :mes"
         ),
         {"hogar": escenario["hogar"], "mes": ENERO},
     )
@@ -964,7 +964,7 @@ async def test_no_se_deshace_si_otra_fusion_posterior_toco_las_mismas_filas(
     enero = (
         await sesion_bd.execute(
             text(
-                "SELECT id FROM budget_periods WHERE household_id = :hogar  AND period_month = :mes"
+                "SELECT id FROM budget_periods WHERE household_id = :hogar  AND period_start = :mes"
             ),
             {"hogar": hogar, "mes": ENERO},
         )

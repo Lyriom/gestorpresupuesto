@@ -1,4 +1,4 @@
-"""Presupuesto mensual: el periodo y el reparto por temática."""
+"""Presupuesto del periodo —un mes o una semana— y su reparto por temática."""
 
 from __future__ import annotations
 
@@ -22,21 +22,30 @@ from app.db.base import Money
 from app.models.hogar import CHECK_MODOS_ARRASTRE
 from app.models.mixins import DomainBase, fk_tenencia, uuid_fk
 
+GRANULARIDADES = ("month", "week")
+CHECK_GRANULARIDADES = "granularity IN ('month', 'week')"
+
 ORIGENES_INGRESO = ("manual", "derived")
 ORIGENES_ASIGNACION = ("user", "template", "rollover", "merge")
 
 
 class BudgetPeriod(DomainBase):
-    """Un mes presupuestario del hogar: el contenedor de la BudgetBar.
+    """Un periodo presupuestario del hogar: el contenedor de la BudgetBar.
 
-    No hay tabla de «ingresos del mes»: esos ingresos **son** transacciones con
+    No hay tabla de «ingresos del periodo»: esos ingresos **son** transacciones con
     `kind = 'income'`. Lo que sí hace falta es un número de planificación, porque
-    el día 1 el usuario reparte dinero que aún no ha cobrado: `expected_income`.
+    el primer día el usuario reparte dinero que aún no ha cobrado: `expected_income`.
+
+    `granularity` va en la fila y no solo en el ajuste del hogar. El ajuste dice
+    cómo se presupuesta de ahora en adelante; la fila dice qué era este periodo
+    cuando se creó, así que pasar el hogar de meses a semanas no reinterpreta lo
+    que ya está guardado.
     """
 
     __tablename__ = "budget_periods"
 
-    period_month: Mapped[date] = mapped_column(Date, nullable=False)
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    granularity: Mapped[str] = mapped_column(String(5), nullable=False, server_default="month")
     expected_income: Mapped[Decimal | None] = mapped_column(Money)
     income_source: Mapped[str] = mapped_column(String(8), nullable=False, server_default="derived")
     note: Mapped[str | None] = mapped_column(Text)
@@ -52,10 +61,17 @@ class BudgetPeriod(DomainBase):
     )
 
     __table_args__ = (
-        UniqueConstraint("household_id", "period_month"),
-        # El día 1 no es una convención de la aplicación: es una restricción de la base.
+        # El 1 de junio de 2026 es lunes: el mes y la semana 23 empiezan el mismo día
+        # y son dos periodos distintos, así que la granularidad entra en la unicidad.
+        UniqueConstraint("household_id", "granularity", "period_start"),
+        # Que un periodo empiece el día 1 si es un mes y en lunes si es una semana no
+        # es una convención de la aplicación: es una restricción de la base. La misma
+        # expresión sirve para los dos porque `date_trunc` recibe la unidad como dato,
+        # y su semana es de lunes a domingo, igual que la ISO que usa el servicio.
+        CheckConstraint(CHECK_GRANULARIDADES, name="granularity"),
         CheckConstraint(
-            "period_month = date_trunc('month', period_month)::date", name="first_of_month"
+            "period_start = date_trunc(granularity, period_start::timestamp)::date",
+            name="period_start",
         ),
         CheckConstraint("income_source IN ('manual', 'derived')", name="income_source"),
         CheckConstraint("expected_income IS NULL OR expected_income >= 0", name="expected_income"),
@@ -68,9 +84,10 @@ class BudgetPeriod(DomainBase):
             name="rollover_needs_close",
         ),
         Index(
-            "ix_budget_periods_household_id_period_month",
+            "ix_budget_periods_household_id_granularity_period_start",
             "household_id",
-            text("period_month DESC"),
+            "granularity",
+            text("period_start DESC"),
         ),
         UniqueConstraint("household_id", "id"),
     )

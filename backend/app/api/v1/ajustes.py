@@ -128,6 +128,7 @@ def _respuesta_ajustes(hogar: Household, tema: str, preferencias: SavedView) -> 
     arrastre = hogar.default_rollover_mode
     return AjustesRespuesta(
         currency=hogar.currency,
+        budget_granularity=hogar.budget_granularity,
         locale=hogar.locale,
         timezone=hogar.timezone,
         first_day_of_week=int(_valor(preferencias, "first_day_of_week")),
@@ -169,6 +170,7 @@ async def actualizar_ajustes(
         ("currency", "currency"),
         ("locale", "locale"),
         ("timezone", "timezone"),
+        ("budget_granularity", "budget_granularity"),
     ):
         if entrada in campos and campos[entrada] is not None:
             setattr(hogar, columna, campos[entrada])

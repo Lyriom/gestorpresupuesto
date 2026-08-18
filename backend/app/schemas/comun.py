@@ -132,19 +132,29 @@ CantidadStr = PrecioStr
 # --------------------------------------------------------------------------- #
 
 PATRON_PERIODO = r"^\d{4}-(0[1-9]|1[0-2])$"
+
+#: Un mes (`2026-08`) o una semana ISO (`2026-W33`). Que la semana exista de verdad
+#: en ese año lo comprueba el servicio, que es quien tiene el calendario.
+PATRON_PERIODO_PRESUPUESTO = r"^\d{4}-((0[1-9]|1[0-2])|W(0[1-9]|[1-4]\d|5[0-3]))$"
 ANYO_MINIMO = 1970
 ANYO_MAXIMO = 2200
 
 
-def _validar_periodo(valor: Any) -> Any:
-    """RN-30: `AAAA-MM` con año entre 1970 y 2200.
+def _validar_periodo(valor: Any, *, semanas: bool) -> Any:
+    """RN-30: `AAAA-MM` —y `AAAA-Wss` donde se presupuesta— con año 1970-2200.
 
     El formato lo comprueba el servicio de presupuesto, que ya es la única
     definición del patrón; aquí solo se traduce su error al formato de la API y
     se añade el rango de años, que es una regla de la capa de contrato.
     """
+    formas = "AAAA-MM o AAAA-Wss" if semanas else "AAAA-MM"
     if not isinstance(valor, str):
-        fallo("periodo_invalido", "El periodo debe ser una cadena con el formato AAAA-MM.")
+        fallo("periodo_invalido", f"El periodo debe ser una cadena con el formato {formas}.")
+    if not semanas and "W" in valor.upper():
+        fallo(
+            "periodo_invalido",
+            "Este parámetro es mensual: usa AAAA-MM. Solo el presupuesto admite semanas.",
+        )
     try:
         validar_periodo(valor)
     except ErrorPresupuesto as exc:
@@ -181,12 +191,25 @@ def _validar_color(valor: Any) -> Any:
     return valor.lower()
 
 
-#: Periodo de presupuesto (RN-30). El patrón se declara además para OpenAPI.
+#: Un mes (RN-30). El patrón se declara además para OpenAPI.
+#:
+#: Los informes y las alertas son mensuales y usan este; solo el presupuesto usa
+#: `PeriodoPresupuesto`. Son dos tipos y no uno porque una serie mensual a la que se
+#: le pide una semana no puede contestar nada sensato, y es mejor un 422 que decirle
+#: «agosto» a quien ha pedido la semana 33.
 Periodo = Annotated[
     str,
     StringConstraints(pattern=PATRON_PERIODO),
-    BeforeValidator(_validar_periodo),
+    BeforeValidator(lambda valor: _validar_periodo(valor, semanas=False)),
     Field(examples=["2026-08"]),
+]
+
+#: Un periodo presupuestario: un mes o una semana ISO.
+PeriodoPresupuesto = Annotated[
+    str,
+    StringConstraints(pattern=PATRON_PERIODO_PRESUPUESTO),
+    BeforeValidator(lambda valor: _validar_periodo(valor, semanas=True)),
+    Field(examples=["2026-08", "2026-W33"]),
 ]
 Moneda = Annotated[str, BeforeValidator(_validar_moneda), Field(examples=["EUR"])]
 ColorHex = Annotated[str, BeforeValidator(_validar_color), Field(examples=["#1e88e5"])]

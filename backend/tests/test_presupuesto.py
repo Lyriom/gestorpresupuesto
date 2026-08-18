@@ -1,5 +1,6 @@
 """Pruebas del cálculo de la barra de presupuesto."""
 
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -8,9 +9,15 @@ from app.services.presupuesto import (
     EntradaCategoria,
     ErrorPresupuesto,
     EstadoSegmento,
+    Granularidad,
     calcular_arrastre,
     calcular_barra,
+    dias_de,
+    fin_de,
+    granularidad_de,
+    inicio_de,
     periodo_anterior,
+    periodo_de,
     periodo_siguiente,
     reasignar,
     reparto_sugerido,
@@ -53,6 +60,52 @@ class TestPeriodos:
     def test_cruza_el_cambio_de_anyo(self):
         assert periodo_anterior("2026-01") == "2025-12"
         assert periodo_siguiente("2026-12") == "2027-01"
+
+    def test_el_mes_va_del_uno_al_ultimo(self):
+        assert inicio_de("2026-02") == date(2026, 2, 1)
+        assert fin_de("2026-02") == date(2026, 2, 28)
+        assert dias_de("2026-02") == 28
+
+
+class TestPeriodosSemanales:
+    def test_reconoce_la_forma_de_cada_uno(self):
+        assert granularidad_de("2026-08") is Granularidad.MES
+        assert granularidad_de("2026-W33") is Granularidad.SEMANA
+
+    @pytest.mark.parametrize("malo", ["2026-W00", "2026-W54", "2026-W3", "2026-w33", "2026W33"])
+    def test_rechaza_semanas_invalidas(self, malo):
+        with pytest.raises(ErrorPresupuesto):
+            validar_periodo(malo)
+
+    def test_la_semana_va_de_lunes_a_domingo(self):
+        assert inicio_de("2026-W33") == date(2026, 8, 10)
+        assert fin_de("2026-W33") == date(2026, 8, 16)
+        assert dias_de("2026-W33") == 7
+        assert inicio_de("2026-W33").weekday() == 0
+
+    def test_navega_entre_semanas(self):
+        assert periodo_anterior("2026-W33") == "2026-W32"
+        assert periodo_siguiente("2026-W33") == "2026-W34"
+
+    def test_el_anyo_de_la_semana_es_el_iso_y_no_el_del_calendario(self):
+        # El 31 de diciembre de 2025 es miércoles y cae en la primera semana de
+        # 2026. Si se usara el año del calendario saldría 2025-W01, que es una
+        # semana de enero: el presupuesto de fin de año iría a otro sitio.
+        assert periodo_de(date(2025, 12, 31), Granularidad.SEMANA) == "2026-W01"
+        assert periodo_de(date(2025, 12, 31)) == "2025-12"
+
+    def test_cruza_el_cambio_de_anyo_iso(self):
+        assert periodo_siguiente("2025-W52") == "2026-W01"
+        assert periodo_anterior("2026-W01") == "2025-W52"
+
+    def test_admite_los_anyos_de_cincuenta_y_tres_semanas(self):
+        # 2026 empieza en jueves, así que tiene 53 semanas ISO; 2025 tiene 52.
+        assert inicio_de("2026-W53") == date(2026, 12, 28)
+        with pytest.raises(ErrorPresupuesto):
+            inicio_de("2025-W53")
+
+    def test_la_semana_53_enlaza_con_la_primera_del_siguiente(self):
+        assert periodo_siguiente("2026-W53") == "2027-W01"
 
 
 class TestBarraDePresupuesto:

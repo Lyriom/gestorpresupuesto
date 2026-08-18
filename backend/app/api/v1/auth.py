@@ -68,6 +68,7 @@ from app.schemas.auth import (
 )
 from app.schemas.comun import Pagina
 from app.schemas.usuario import UsuarioRespuesta, YoRespuesta
+from app.services.presupuesto import Granularidad, periodo_de
 
 logger = logging.getLogger("app.auth")
 
@@ -264,7 +265,20 @@ async def moneda_del_hogar(sesion: Sesion, usuario: User) -> str:
     return (await sesion.execute(consulta)).scalar_one_or_none() or settings.default_currency
 
 
-async def usuario_respuesta(sesion: Sesion, usuario: User, moneda: str) -> UsuarioRespuesta:
+async def granularidad_del_hogar(sesion: Sesion, usuario: User) -> str:
+    """Si el hogar por defecto presupuesta por meses o por semanas."""
+    consulta = (
+        select(Household.budget_granularity)
+        .join(HouseholdMember, HouseholdMember.household_id == Household.id)
+        .where(HouseholdMember.user_id == usuario.id, HouseholdMember.is_default.is_(True))
+        .limit(1)
+    )
+    return (await sesion.execute(consulta)).scalar_one_or_none() or Granularidad.MES.value
+
+
+async def usuario_respuesta(
+    sesion: Sesion, usuario: User, moneda: str, granularidad: str = Granularidad.MES.value
+) -> UsuarioRespuesta:
     """`UserOut`: el modelo no guarda ni la divisa ni un booleano de onboarding.
 
     Se refresca la fila antes de leerla porque `updated_at` lleva
@@ -281,18 +295,24 @@ async def usuario_respuesta(sesion: Sesion, usuario: User, moneda: str) -> Usuar
         locale=usuario.locale,
         timezone=usuario.timezone,
         currency=moneda,
+        budget_granularity=granularidad,
         theme=usuario.theme,
         onboarding_completed=usuario.onboarded_at is not None,
     )
 
 
-def periodo_actual(zona: str) -> str:
-    """`AAAA-MM` de hoy en la zona del hogar (§1.8)."""
+def periodo_actual(zona: str, granularidad: str = Granularidad.MES.value) -> str:
+    """El periodo de hoy en la zona del hogar (§1.8): `2026-08` o `2026-W33`.
+
+    Lo calcula el servidor y no la SPA para que las dos vean el mismo «hoy»: el
+    navegador está en la zona del portátil y el hogar puede estar en otra, y en la
+    frontera de la semana eso son dos periodos distintos.
+    """
     try:
         ahora = datetime.now(ZoneInfo(zona))
     except Exception:  # noqa: BLE001 - una zona inválida no debe romper «yo»
         ahora = datetime.now(ZoneInfo(settings.default_timezone))
-    return f"{ahora.year:04d}-{ahora.month:02d}"
+    return periodo_de(ahora.date(), Granularidad(granularidad))
 
 
 async def yo_respuesta(alcance: AlcanceHogar) -> YoRespuesta:
@@ -323,15 +343,19 @@ async def yo_respuesta(alcance: AlcanceHogar) -> YoRespuesta:
         )
     )
     zona = hogar.timezone if hogar else alcance.usuario.timezone
+    granularidad = hogar.budget_granularity if hogar else Granularidad.MES.value
     base = await usuario_respuesta(
-        sesion, alcance.usuario, hogar.currency if hogar else settings.default_currency
+        sesion,
+        alcance.usuario,
+        hogar.currency if hogar else settings.default_currency,
+        granularidad,
     )
     return YoRespuesta(
         **base.model_dump(),
         accounts_count=cuentas or 0,
         categories_count=tematicas or 0,
         unread_alerts=avisos or 0,
-        current_period=periodo_actual(zona),
+        current_period=periodo_actual(zona, granularidad),
         session_expires_at=datetime.now(UTC) + timedelta(minutes=settings.access_token_minutes),
     )
 
@@ -461,7 +485,7 @@ async def registrar(
 
     await _abrir_sesion(sesion, usuario, peticion, respuesta)
     await sesion.commit()
-    return await usuario_respuesta(sesion, usuario, hogar.currency)
+    return await usuario_respuesta(sesion, usuario, hogar.currency, hogar.budget_granularity)
 
 
 @router.post("/auth/login", response_model=UsuarioRespuesta, summary="Iniciar sesión")
@@ -497,7 +521,12 @@ async def login(
     usuario.last_login_at = datetime.now(UTC)
     await _abrir_sesion(sesion, usuario, peticion, respuesta)
     await sesion.commit()
-    return await usuario_respuesta(sesion, usuario, await moneda_del_hogar(sesion, usuario))
+    return await usuario_respuesta(
+        sesion,
+        usuario,
+        await moneda_del_hogar(sesion, usuario),
+        await granularidad_del_hogar(sesion, usuario),
+    )
 
 
 async def _revocar_familia(sesion: Sesion, token_id: uuid.UUID) -> None:

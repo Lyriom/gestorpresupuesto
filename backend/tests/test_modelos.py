@@ -284,12 +284,40 @@ async def test_adjunto_necesita_exactamente_un_dueno(
     await sesion.rollback()
 
 
-async def test_periodo_presupuestario_debe_ser_dia_uno(
+async def test_un_periodo_mensual_debe_empezar_el_dia_uno(
     sesion: AsyncSession, hogar: Household
 ) -> None:
-    sesion.add(BudgetPeriod(household_id=hogar.id, period_month=date(2026, 8, 15)))
-    with pytest.raises(IntegrityError, match="ck_budget_periods_first_of_month"):
+    sesion.add(BudgetPeriod(household_id=hogar.id, period_start=date(2026, 8, 15)))
+    with pytest.raises(IntegrityError, match="ck_budget_periods_period_start"):
         await sesion.commit()
+    await sesion.rollback()
+
+
+async def test_un_periodo_semanal_debe_empezar_en_lunes(
+    sesion: AsyncSession, hogar: Household
+) -> None:
+    """El 11 de agosto de 2026 es martes: no hay semana ISO que empiece ahí."""
+    sesion.add(
+        BudgetPeriod(household_id=hogar.id, period_start=date(2026, 8, 11), granularity="week")
+    )
+    with pytest.raises(IntegrityError, match="ck_budget_periods_period_start"):
+        await sesion.commit()
+    await sesion.rollback()
+
+
+async def test_el_mes_y_la_semana_que_empiezan_el_mismo_dia_conviven(
+    sesion: AsyncSession, hogar: Household
+) -> None:
+    """El 1 de junio de 2026 es lunes, así que junio y la semana 23 arrancan juntos.
+
+    Si la unicidad fuera solo `(household_id, period_start)` uno de los dos no se
+    podría guardar, y no son el mismo periodo.
+    """
+    sesion.add(BudgetPeriod(household_id=hogar.id, period_start=date(2026, 6, 1)))
+    sesion.add(
+        BudgetPeriod(household_id=hogar.id, period_start=date(2026, 6, 1), granularity="week")
+    )
+    await sesion.commit()
     await sesion.rollback()
 
 
@@ -297,7 +325,7 @@ async def test_asignacion_negativa_rechazada(
     sesion: AsyncSession, hogar: Household, tematica: Category
 ) -> None:
     """Retirar dinero de una temática es bajar su asignación, no ponerla negativa."""
-    periodo = BudgetPeriod(household_id=hogar.id, period_month=date(2026, 8, 1))
+    periodo = BudgetPeriod(household_id=hogar.id, period_start=date(2026, 8, 1))
     sesion.add(periodo)
     await sesion.commit()
     # Se guardan los identificadores: el `rollback` de más abajo caduca los objetos y

@@ -20,7 +20,7 @@ from app.schemas.comun import (
     Actualizacion,
     ImporteStr,
     ParametrosListado,
-    Periodo,
+    PeriodoPresupuesto,
     Peticion,
     Respuesta,
     fallo,
@@ -92,7 +92,7 @@ class PresupuestoAjustesCrear(Peticion):
 class PresupuestoRespuesta(Respuesta):
     """El payload del `BudgetBar`."""
 
-    period: Periodo
+    period: PeriodoPresupuesto
     currency: str
     is_closed: bool
     closed_at: datetime | None = None
@@ -106,17 +106,20 @@ class PresupuestoRespuesta(Respuesta):
     unassigned: ImporteStr = Field(description="income − allocated_total. Puede ser negativo.")
     overallocated: ImporteStr = Field(ge=0, description="max(0, allocated_total − income).")
     rollover_in_total: ImporteStr
-    day_of_month: int = Field(ge=1, le=31)
-    days_in_month: int = Field(ge=28, le=31)
+    #: Del periodo, no del mes: en la semana que empieza el 10 de agosto, el día 13
+    #: es el 4 de 7. `days_in_period` baja a 7, que es por lo que no puede seguir
+    #: exigiendo un mínimo de 28.
+    day_of_period: int = Field(ge=1, le=31)
+    days_in_period: int = Field(ge=1, le=31)
     allocations: list[AsignacionRespuesta] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     note: str | None = None
 
 
 class PresupuestoResumenRespuesta(Respuesta):
-    """Una fila del selector de mes."""
+    """Una fila del selector de periodo."""
 
-    period: Periodo
+    period: PeriodoPresupuesto
     income: ImporteStr
     allocated_total: ImporteStr
     spent_total: ImporteStr
@@ -138,7 +141,7 @@ class PresupuestoReasignarCrear(Peticion):
 
 
 class PresupuestoCopiarCrear(Peticion):
-    source_period: Periodo
+    source_period: PeriodoPresupuesto
     strategy: Literal["absolute", "proportional"] = "absolute"
     overwrite: bool = False
     only_missing: bool = True
@@ -157,7 +160,7 @@ class ArrastreRespuesta(Respuesta):
 
     category_id: UUID
     category: CategoriaRefRespuesta
-    previous_period: Periodo
+    previous_period: PeriodoPresupuesto
     previous_allocated: ImporteStr
     previous_spent: ImporteStr
     carried_in: ImporteStr
@@ -168,8 +171,8 @@ class PresupuestoFiltro(ParametrosListado):
     CAMPOS_ORDENABLES = frozenset({"period"})
     ORDEN_POR_DEFECTO = "-period"
 
-    period_from: Periodo | None = None
-    period_to: Periodo | None = None
+    period_from: PeriodoPresupuesto | None = None
+    period_to: PeriodoPresupuesto | None = None
 
 
 class PresupuestoDetalleFiltro(ParametrosListado):

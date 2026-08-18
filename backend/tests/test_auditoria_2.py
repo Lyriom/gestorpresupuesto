@@ -554,7 +554,7 @@ async def test_el_prorrateo_del_presupuesto_restante_cuadra_al_centimo(
             Account(household_id=hogar, name=nombre, type="checking", account_class="asset")
         )
     tematica = await tematica_directa(sesion_bd, hogar, "Alimentación")
-    periodo = BudgetPeriod(household_id=hogar, period_month=date(HOY.year, HOY.month, 1))
+    periodo = BudgetPeriod(household_id=hogar, period_start=date(HOY.year, HOY.month, 1))
     sesion_bd.add(periodo)
     await sesion_bd.flush()
     sesion_bd.add(

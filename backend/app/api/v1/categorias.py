@@ -14,7 +14,7 @@ de la de la madre, igual que hace `app/db/semillas.py`.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Annotated, Any
 
@@ -59,6 +59,7 @@ from app.services.fusion import (
     previsualizar,
 )
 from app.services.normalizacion import sin_acentos
+from app.services.presupuesto import granularidad_de, inicio_de, rango_de
 
 router = APIRouter(tags=["categories"])
 
@@ -119,14 +120,15 @@ async def _arbol_del_hogar(
 async def _estadisticas(
     alcance: AlcanceHogar, periodo: str | None
 ) -> tuple[dict[uuid.UUID, int], dict[uuid.UUID, Decimal], dict[uuid.UUID, Decimal]]:
-    """Movimientos, gastado y asignado por temática, opcionalmente de un mes.
+    """Movimientos, gastado y asignado por temática, opcionalmente de un periodo.
 
     Se leen de `vw_movement_lines`, que es donde está escrita una sola vez la
     disyunción «transacción simple o repartida» y la inversión del signo.
     """
-    # asyncpg exige un `date` de verdad: el parámetro se compara con una columna
-    # `date`, así que una cadena ISO no le sirve.
-    mes = date.fromisoformat(f"{periodo}-01") if periodo else None
+    # Por rango de fechas y no por la columna `period_month` de la vista, que es
+    # siempre el mes del movimiento: con un periodo semanal esa comparación traía el
+    # gasto del mes entero. asyncpg exige `date` de verdad, no una cadena ISO.
+    desde, hasta = rango_de(periodo) if periodo else (None, None)
     filas = await alcance.sesion.execute(
         text(
             """
@@ -136,11 +138,11 @@ async def _estadisticas(
                AND category_id IS NOT NULL
                AND kind <> 'transfer'
                AND NOT excluded_from_reports
-               AND (cast(:mes as date) IS NULL OR period_month = cast(:mes as date))
+               AND (cast(:desde as date) IS NULL OR booked_on BETWEEN :desde AND :hasta)
              GROUP BY category_id
             """
         ),
-        {"hogar": alcance.household_id, "mes": mes},
+        {"hogar": alcance.household_id, "desde": desde, "hasta": hasta},
     )
     cuantas: dict[uuid.UUID, int] = {}
     gastado: dict[uuid.UUID, Decimal] = {}
@@ -154,7 +156,10 @@ async def _estadisticas(
     if periodo:
         consulta = consulta.join(
             BudgetPeriod, BudgetPeriod.id == BudgetAllocation.budget_period_id
-        ).where(BudgetPeriod.period_month == date.fromisoformat(f"{periodo}-01"))
+        ).where(
+            BudgetPeriod.period_start == inicio_de(periodo),
+            BudgetPeriod.granularity == granularidad_de(periodo).value,
+        )
     consulta = consulta.group_by(BudgetAllocation.category_id)
     asignado = {
         fila[0]: Decimal(str(fila[1])) for fila in (await alcance.sesion.execute(consulta)).all()

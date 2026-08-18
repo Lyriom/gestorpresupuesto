@@ -31,6 +31,9 @@ class UsuarioRespuesta(RespuestaSellada):
     locale: str
     timezone: str
     currency: str
+    #: Del hogar, como la moneda: la SPA lo necesita al arrancar para saber si el
+    #: periodo que tiene que pedir es `2026-08` o `2026-W33`.
+    budget_granularity: str = "month"
     theme: Tema
     onboarding_completed: bool
 
