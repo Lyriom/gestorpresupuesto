@@ -7,6 +7,7 @@ import {
   localeActual,
   nombreMoneda,
   parsearImporte,
+  separadores,
   simboloDe,
 } from '@/lib/formato'
 
@@ -80,51 +81,61 @@ const tope = computed(() => props.maximo ?? MAX_CENTIMOS)
 
 /* ---------- Máscara ----------------------------------------------------- */
 
+/**
+ * Los separadores salen del idioma en uso y no escritos aquí, porque el número
+ * que escribe la máscara lo vuelve a leer `parsearImporte()`: si los dos no usan
+ * exactamente los mismos, teclear 2800 acaba valiendo 2,80.
+ */
 function agrupar(entero: string): string {
-  return entero.replace(/\B(?=(\d{3})+(?!\d))/g, '.')
+  return entero.replace(/\B(?=(\d{3})+(?!\d))/g, separadores().millar)
 }
 
 /**
- * Deja dígitos, una sola coma decimal por operando (máximo 2 decimales) y los
- * `+` de la aritmética simple. Los puntos se eliminan siempre: son separadores
- * de millar puestos por la máscara, porque el punto tecleado se convierte en
- * coma antes de llegar aquí.
+ * Deja dígitos, un solo separador decimal por operando (máximo 2 decimales) y
+ * los `+` de la aritmética simple. Los separadores de millar se eliminan
+ * siempre: los pone la máscara, no el usuario, porque la tecla del punto se
+ * convierte en el separador decimal antes de llegar aquí.
  */
 function limpiar(bruto: string): string {
+  const { decimal } = separadores()
   return bruto
-    .replace(/[^\d,+]/g, '')
+    .replace(new RegExp(`[^\\d${decimal}+]`, 'g'), '')
     .split('+')
     .map((op) => {
-      const i = op.indexOf(',')
+      const i = op.indexOf(decimal)
       if (i === -1) return op
-      return `${op.slice(0, i)},${op.slice(i + 1).replace(/,/g, '').slice(0, 2)}`
+      const tras = op.slice(i + 1).split(decimal).join('').slice(0, 2)
+      return `${op.slice(0, i)}${decimal}${tras}`
     })
     .join('+')
 }
 
 function enmascarar(limpio: string): string {
+  const { decimal } = separadores()
   return limpio
     .split('+')
     .map((op) => {
-      const [entero = '', decimal] = op.split(',')
+      const [entero = '', tras] = op.split(decimal)
       const e = agrupar(entero)
-      return decimal === undefined ? e : `${e},${decimal}`
+      return tras === undefined ? e : `${e}${decimal}${tras}`
     })
     .join('+')
 }
 
 /** El cursor se mantiene por posición lógica (dígitos), no de caracteres. */
 function significativosHasta(s: string, limite: number): number {
+  const { millar } = separadores()
   let n = 0
-  for (let i = 0; i < limite && i < s.length; i++) if (s[i] !== '.') n++
+  for (let i = 0; i < limite && i < s.length; i++) if (s[i] !== millar) n++
   return n
 }
 
 function posicionTras(s: string, cuantos: number): number {
+  const { millar } = separadores()
   let n = 0
   for (let i = 0; i < s.length; i++) {
     if (n === cuantos) return i
-    if (s[i] !== '.') n++
+    if (s[i] !== millar) n++
   }
   return s.length
 }
@@ -161,13 +172,16 @@ function alEscribir(evento: Event): void {
 }
 
 function alPulsar(evento: KeyboardEvent): void {
-  // Punto y coma del teclado numérico son lo mismo: separador decimal.
-  if (evento.key !== '.') return
+  // Punto y coma son lo mismo: los dos ponen el separador decimal del idioma.
+  // El teclado numérico del portátil trae uno y el del móvil el otro.
+  const { decimal } = separadores()
+  if (evento.key !== '.' && evento.key !== ',') return
+  if (evento.key === decimal) return
   evento.preventDefault()
   const el = evento.target as HTMLInputElement
   const i = el.selectionStart ?? el.value.length
   const f = el.selectionEnd ?? i
-  el.value = `${el.value.slice(0, i)},${el.value.slice(f)}`
+  el.value = `${el.value.slice(0, i)}${decimal}${el.value.slice(f)}`
   el.setSelectionRange(i + 1, i + 1)
   el.dispatchEvent(new Event('input'))
 }
@@ -198,7 +212,7 @@ function alSalir(): void {
   const partes = bruto.split('+').map((p) => p.trim()).filter(Boolean)
   const valores = partes.map(parsearImporte)
   if (valores.some((v) => v === null)) {
-    errorInterno.value = 'Introduce un importe con el formato 1.234,56.'
+    errorInterno.value = `Introduce un importe con el formato ${formateadorCampo().format(1234.56)}.`
     return
   }
   if (partes.length > 1) {
@@ -260,7 +274,7 @@ defineExpose({ enfocar: () => campo.value?.focus() })
         inputmode="decimal"
         autocomplete="off"
         enterkeyhint="done"
-        placeholder="0,00"
+        :placeholder="formateadorCampo().format(0)"
         :disabled="deshabilitado"
         :required="requerido"
         :aria-invalid="errorVisible ? 'true' : undefined"

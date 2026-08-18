@@ -62,6 +62,22 @@ export function localeActual(): string {
   return locale.value
 }
 
+/**
+ * Los separadores de millar y de decimales del idioma en uso: en es-EC, `.` y `,`.
+ *
+ * Los necesita la máscara del campo de importes, que tiene que escribir el número
+ * con los mismos separadores con los que `parsearImporte()` lo va a leer después.
+ * Salen de `Intl` en vez de escribirse a mano, que es lo que hacía que el campo
+ * agrupara a la española aunque la instalación estuviera en otro idioma.
+ */
+export function separadores(): { millar: string; decimal: string } {
+  const partes = memo('separadores', () => new Intl.NumberFormat(locale.value)).formatToParts(11111.1)
+  return {
+    millar: partes.find((parte) => parte.type === 'group')?.value ?? '.',
+    decimal: partes.find((parte) => parte.type === 'decimal')?.value ?? ',',
+  }
+}
+
 function formateadorMoneda(moneda: string, decimales: boolean): Intl.NumberFormat {
   return memo(
     `moneda:${moneda}:${decimales}`,
@@ -312,6 +328,20 @@ export function tiempoRelativo(valor: string | Date | null | undefined): string 
 }
 
 /**
+ * Un entero con separador de millar y nada más: `2.800`, `1.234.567`, `2,800`.
+ *
+ * Con un único separador y **exactamente tres cifras detrás** no hay ambigüedad
+ * en un importe, porque un importe tiene dos decimales como mucho: `2.800` son
+ * dos mil ochocientos, no dos con ocho. Es al revés que en `numeros.py`, que lee
+ * `1,234` a la española porque ahí sí puede ser un precio unitario de cuatro
+ * decimales; aquí no, aquí son euros o dólares con sus céntimos.
+ *
+ * El primer grupo va de una a tres cifras y no empieza por cero, que es lo que
+ * separa un millar de verdad de un `0.800` mal escrito, que sí son ocho décimas.
+ */
+const MILLARES = { ',': /^-?[1-9]\d{0,2}(,\d{3})+$/, '.': /^-?[1-9]\d{0,2}(\.\d{3})+$/ }
+
+/**
  * Convierte lo que el usuario escribe en un campo de importe a número.
  * Acepta `1.234,56`, `1234,56`, `1234.56`, `1 234,56`, `$1.234,56` y `25 €`.
  */
@@ -329,8 +359,11 @@ export function parsearImporte(entrada: string): number | null {
       limpio.lastIndexOf(',') > limpio.lastIndexOf('.')
         ? limpio.replace(/\./g, '').replace(',', '.')
         : limpio.replace(/,/g, '')
-  } else if (tieneComa) {
-    normalizado = limpio.replace(',', '.')
+  } else if (tieneComa || tienePunto) {
+    const sep = tieneComa ? ',' : '.'
+    normalizado = MILLARES[sep].test(limpio)
+      ? limpio.split(sep).join('')
+      : limpio.replace(sep, '.')
   }
   const n = Number.parseFloat(normalizado)
   return Number.isFinite(n) ? n : null
