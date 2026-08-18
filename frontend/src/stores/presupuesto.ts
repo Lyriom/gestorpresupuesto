@@ -45,8 +45,9 @@ export const usePresupuesto = defineStore('presupuesto', () => {
     void cargar()
   }
 
-  function moverPeriodo(meses: number): void {
-    establecerPeriodo(desplazarPeriodo(periodo.value, meses))
+  /** Adelante o atrás un periodo, sea un mes o una semana. */
+  function moverPeriodo(cuantos: number): void {
+    establecerPeriodo(desplazarPeriodo(periodo.value, cuantos))
   }
 
   async function cargar(): Promise<void> {

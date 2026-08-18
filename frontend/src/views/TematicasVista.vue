@@ -225,8 +225,9 @@ watch(
           <BarraCategoria
             v-if="asignacionPorId.get(fila.nodo.id)"
             :asignacion="asignacionPorId.get(fila.nodo.id) as AsignacionTematica"
-            :dia-actual="presupuesto.mes?.day_of_month"
-            :dias-del-mes="presupuesto.mes?.days_in_month"
+            :dia-actual="presupuesto.mes?.day_of_period"
+            :dias-del-periodo="presupuesto.mes?.days_in_period"
+            :periodo="presupuesto.mes?.period"
             @activar="irADetalle"
             @asignar="repartoAbierto = true"
           />

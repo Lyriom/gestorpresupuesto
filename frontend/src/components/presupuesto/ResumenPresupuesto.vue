@@ -19,7 +19,14 @@ import {
   Wallet,
 } from 'lucide-vue-next'
 
-import { aNumero, etiquetaPeriodo, dinero, porcentaje } from '@/lib/formato'
+import {
+  aNumero,
+  dinero,
+  etiquetaPeriodo,
+  palabrasDe,
+  periodoDe,
+  porcentaje,
+} from '@/lib/formato'
 import type { ClaveCifra, PresupuestoMes } from './types'
 
 const props = withDefaults(
@@ -32,6 +39,9 @@ const props = withDefaults(
   }>(),
   { cargando: false, destacada: null, mostrarAvisos: true },
 )
+
+/** «del mes» o «de la semana», según lo que se esté presupuestando. */
+const palabras = computed(() => palabrasDe(props.barra?.period ?? periodoDe()))
 
 type Tono = 'neutro' | 'positivo' | 'negativo' | 'aviso'
 
@@ -62,7 +72,8 @@ const cifras = computed<Cifra[]>(() => {
       clave: 'ingresos',
       etiqueta: 'Ingresos',
       valor: dinero(ingresos, { signoSiempre: true }),
-      nota: ingresos > 0 ? 'Lo que ha entrado este mes' : 'Todavía sin ingresos registrados',
+      nota:
+        ingresos > 0 ? `Lo que ha entrado ${palabras.value.este}` : 'Todavía sin ingresos registrados',
       tono: 'neutro',
       icono: 'entrada',
     },
@@ -117,7 +128,7 @@ const cifras = computed<Cifra[]>(() => {
       clave: 'arrastrado',
       etiqueta: 'Arrastrado',
       valor: dinero(arrastrado),
-      nota: 'Viene del mes anterior',
+      nota: `Viene ${palabras.value.anterior}`,
       tono: 'neutro',
       icono: null,
     })
@@ -146,7 +157,7 @@ const avisos = computed(() => {
 })
 
 const titulo = computed(() =>
-  props.barra ? `Resumen de ${etiquetaPeriodo(props.barra.period).toLowerCase()}` : 'Resumen del mes',
+  props.barra ? `Resumen de ${etiquetaPeriodo(props.barra.period).toLowerCase()}` : 'Resumen',
 )
 </script>
 
@@ -159,7 +170,7 @@ const titulo = computed(() =>
           <span class="esqueleto esqueleto--valor" />
         </li>
       </ul>
-      <p class="solo-lectores" role="status">Cargando el resumen del mes.</p>
+      <p class="solo-lectores" role="status">Cargando el resumen.</p>
     </template>
 
     <template v-else>
@@ -182,7 +193,7 @@ const titulo = computed(() =>
         </li>
       </ul>
 
-      <ul v-if="avisos.length > 0" class="avisos" aria-live="polite" aria-label="Avisos del mes">
+      <ul v-if="avisos.length > 0" class="avisos" aria-live="polite" aria-label="Avisos del periodo">
         <li v-for="a in avisos" :key="a.clave" class="aviso" :class="`aviso--${a.tono}`">
           <TriangleAlert v-if="a.tono === 'negativo'" :size="16" aria-hidden="true" />
           <CircleAlert v-else-if="a.tono === 'aviso'" :size="16" aria-hidden="true" />

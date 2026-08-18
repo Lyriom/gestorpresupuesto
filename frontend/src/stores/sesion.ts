@@ -109,14 +109,16 @@ export const useSesion = defineStore('sesion', () => {
   /**
    * Lo del usuario manda sobre lo de la instalación.
    *
-   * La moneda viene del hogar y el idioma del perfil, así que quien tenga el
-   * hogar en dólares ve dólares aunque el servidor arrancase con otra cosa.
+   * La moneda y la granularidad vienen del hogar y el idioma del perfil, así que
+   * quien tenga el hogar en dólares y por semanas ve dólares y semanas aunque el
+   * servidor arrancase con otra cosa.
    */
   function aplicarFormatoDelUsuario(): void {
     if (!usuario.value) return
     configurarFormato({
       locale: usuario.value.locale || undefined,
       moneda: usuario.value.currency || undefined,
+      granularidad: usuario.value.budget_granularity || undefined,
     })
   }
 

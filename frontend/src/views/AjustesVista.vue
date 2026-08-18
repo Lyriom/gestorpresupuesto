@@ -19,9 +19,16 @@ import ModalBase from '@/components/ui/ModalBase.vue'
 import SelectorBase from '@/components/ui/SelectorBase.vue'
 import { useAvisos } from '@/composables/useAvisos'
 import { useTema, type PreferenciaTema } from '@/composables/useTema'
-import { configurarFormato, nombreMoneda, porcentaje, tiempoRelativo } from '@/lib/formato'
+import {
+  configurarFormato,
+  nombreMoneda,
+  periodoDe,
+  porcentaje,
+  tiempoRelativo,
+} from '@/lib/formato'
 import { SECCIONES_AJUSTES, useAjustes, type SeccionAjustes } from '@/stores/ajustes'
 import { mensajeDeError } from '@/stores/comun'
+import { usePresupuesto } from '@/stores/presupuesto'
 import { useSesion } from '@/stores/sesion'
 import BloqueError from './componentes/BloqueError.vue'
 
@@ -29,6 +36,7 @@ const route = useRoute()
 const router = useRouter()
 const sesion = useSesion()
 const ajustes = useAjustes()
+const presupuesto = usePresupuesto()
 const avisos = useAvisos()
 const { preferencia, establecer, opciones: opcionesTema } = useTema()
 
@@ -94,6 +102,32 @@ async function cambiarMoneda(codigo: string): Promise<void> {
   if (!(await ajustes.guardar({ currency: codigo }))) return
   configurarFormato({ moneda: codigo })
   avisos.exito(`Moneda cambiada a ${nombreMoneda(codigo)}.`)
+}
+
+const opcionesGranularidad = [
+  { valor: 'month', etiqueta: 'Cada mes' },
+  { valor: 'week', etiqueta: 'Cada semana, de lunes a domingo' },
+]
+
+/**
+ * De cuánto en cuánto se presupuesta.
+ *
+ * Al cambiarlo hay que mover el periodo que se está mirando: si se estaba en
+ * «Agosto de 2026» y ahora se presupuesta por semanas, ese periodo ya no es el
+ * actual, y dejarlo ahí enseñaría el reparto de un mes en una instalación que ya
+ * razona por semanas. Se salta a la semana de hoy, que es lo que se querrá ver.
+ */
+async function cambiarGranularidad(valor: string): Promise<void> {
+  const granularidad = valor === 'week' ? 'week' : 'month'
+  if (!(await ajustes.guardar({ budget_granularity: granularidad }))) return
+  configurarFormato({ granularidad })
+  await sesion.comprobarSesion()
+  presupuesto.establecerPeriodo(periodoDe(new Date(), granularidad))
+  avisos.exito(
+    granularidad === 'week'
+      ? 'A partir de ahora se reparte por semanas.'
+      : 'A partir de ahora se reparte por meses.',
+  )
 }
 
 const opcionesArrastre = [
@@ -233,6 +267,13 @@ watch(() => sesion.usuario?.id, volcarPerfil)
 
             <template v-if="ajustes.ajustes">
               <SelectorBase
+                :model-value="ajustes.ajustes.budget_granularity"
+                etiqueta="Cada cuánto reparto el dinero"
+                ayuda="Los periodos que ya tengas repartidos no se tocan: siguen siendo lo que eran."
+                :opciones="opcionesGranularidad"
+                @update:model-value="cambiarGranularidad(String($event))"
+              />
+              <SelectorBase
                 :model-value="ajustes.ajustes.currency"
                 etiqueta="Moneda"
                 ayuda="Cambia el símbolo de toda la aplicación. No convierte los importes ya guardados."
@@ -241,7 +282,7 @@ watch(() => sesion.usuario?.id, volcarPerfil)
               />
               <SelectorBase
                 :model-value="ajustes.ajustes.rollover_negative"
-                etiqueta="Qué hacer con el sobregasto al cerrar el mes"
+                etiqueta="Qué hacer con el sobregasto al cerrar el periodo"
                 :opciones="opcionesArrastre"
                 @update:model-value="
                   ajustes.guardar({ rollover_negative: $event === 'reset' ? 'reset' : 'carry' })

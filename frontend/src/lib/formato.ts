@@ -30,6 +30,9 @@ const MONEDA_INICIAL = 'USD'
 const locale = ref(LOCALE_INICIAL)
 const monedaPorDefecto = ref(MONEDA_INICIAL)
 
+/** De cuánto en cuánto presupuesta el hogar. Manda sobre lo que enseña la interfaz. */
+const granularidadPresupuesto = ref<'month' | 'week'>('month')
+
 const cache = new Map<string, Intl.NumberFormat | Intl.DateTimeFormat>()
 
 function memo<T extends Intl.NumberFormat | Intl.DateTimeFormat>(clave: string, crear: () => T): T {
@@ -47,11 +50,20 @@ function memo<T extends Intl.NumberFormat | Intl.DateTimeFormat>(clave: string, 
  * Se llama al cargar `/meta` y otra vez cuando se conoce el hogar, porque la
  * moneda del hogar manda sobre la de la instalación.
  */
-export function configurarFormato(opciones: { locale?: string; moneda?: string }): void {
+export function configurarFormato(opciones: {
+  locale?: string
+  moneda?: string
+  granularidad?: 'month' | 'week'
+}): void {
   const antes = `${locale.value}|${monedaPorDefecto.value}`
   if (opciones.locale) locale.value = opciones.locale
   if (opciones.moneda) monedaPorDefecto.value = opciones.moneda
+  if (opciones.granularidad) granularidadPresupuesto.value = opciones.granularidad
   if (`${locale.value}|${monedaPorDefecto.value}` !== antes) cache.clear()
+}
+
+export function granularidadActual(): 'month' | 'week' {
+  return granularidadPresupuesto.value
 }
 
 export function monedaActual(): string {
@@ -296,23 +308,146 @@ export function mesAnyo(valor: string | Date | null | undefined): string {
   return texto.charAt(0).toUpperCase() + texto.slice(1)
 }
 
-/** Convierte un periodo `2026-08` en su etiqueta legible. */
-export function etiquetaPeriodo(periodo: string): string {
-  const [anyo, mes] = periodo.split('-').map(Number)
-  if (!anyo || !mes) return periodo
-  return mesAnyo(new Date(anyo, mes - 1, 1))
+/* ---------- Periodos: un mes o una semana ISO --------------------------- */
+
+const PATRON_SEMANA = /^(\d{4})-W(\d{2})$/
+
+/** El jueves de la semana de una fecha, que es lo que decide su año ISO. */
+function juevesDeLaSemana(fecha: Date): Date {
+  const d = new Date(fecha.getFullYear(), fecha.getMonth(), fecha.getDate())
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7) + 3)
+  return d
 }
 
-/** Periodo `AAAA-MM` de una fecha; el mes actual si no se pasa nada. */
-export function periodoDe(fecha: Date = new Date()): string {
+/**
+ * Año y número de la semana ISO de una fecha.
+ *
+ * Se resuelve por el jueves porque es el día que la norma usa para decidir de qué
+ * año es una semana: el 31 de diciembre de 2025 es miércoles y su jueves cae ya en
+ * 2026, así que esa semana es la 1 de 2026 y no la 53 de 2025. Y el 4 de enero está
+ * siempre en la semana 1, así que su jueves sirve de origen para contar.
+ */
+function semanaIsoDe(fecha: Date): [number, number] {
+  const jueves = juevesDeLaSemana(fecha)
+  const anyo = jueves.getFullYear()
+  const primero = juevesDeLaSemana(new Date(anyo, 0, 4))
+  return [anyo, 1 + Math.round((jueves.getTime() - primero.getTime()) / 604_800_000)]
+}
+
+/** El lunes de una semana ISO, o `null` si ese año no tiene esa semana. */
+function lunesDeSemanaIso(anyo: number, semana: number): Date | null {
+  const jueves = juevesDeLaSemana(new Date(anyo, 0, 4))
+  jueves.setDate(jueves.getDate() + (semana - 1) * 7)
+  const lunes = new Date(jueves)
+  lunes.setDate(lunes.getDate() - 3)
+  // 2025 tiene 52 semanas: pedir la 53 daría un lunes de 2026, que ya es otra cosa.
+  const [anyoReal, semanaReal] = semanaIsoDe(lunes)
+  return anyoReal === anyo && semanaReal === semana ? lunes : null
+}
+
+export type GranularidadPeriodo = 'month' | 'week'
+
+/** De qué clase es un periodo, deducido de su forma. */
+export function granularidadDe(periodo: string): GranularidadPeriodo {
+  return PATRON_SEMANA.test(periodo) ? 'week' : 'month'
+}
+
+/** Primer y último día de un periodo, los dos incluidos. */
+export function rangoDePeriodo(periodo: string): [Date, Date] | null {
+  const semana = PATRON_SEMANA.exec(periodo)
+  if (semana) {
+    const lunes = lunesDeSemanaIso(Number(semana[1]), Number(semana[2]))
+    if (!lunes) return null
+    const domingo = new Date(lunes)
+    domingo.setDate(domingo.getDate() + 6)
+    return [lunes, domingo]
+  }
+  const [anyo, mes] = periodo.split('-').map(Number)
+  if (!anyo || !mes) return null
+  return [new Date(anyo, mes - 1, 1), new Date(anyo, mes, 0)]
+}
+
+/**
+ * La etiqueta legible de un periodo: `Agosto de 2026` o `10 – 16 de ago de 2026`.
+ *
+ * El rango de la semana lo escribe `formatRange`, que resuelve él solo los casos
+ * que se escriben distinto —una semana a caballo entre dos meses o entre dos años—
+ * y en el idioma en uso. Se enseña el rango y no «semana 33» porque lo que hace
+ * falta saber es qué días se están presupuestando, no el número que le toca.
+ */
+export function etiquetaPeriodo(periodo: string): string {
+  const rango = rangoDePeriodo(periodo)
+  if (!rango) return periodo
+  if (granularidadDe(periodo) === 'month') return mesAnyo(rango[0])
+  return memo(
+    'semana',
+    () =>
+      new Intl.DateTimeFormat(locale.value, {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      }),
+  ).formatRange(rango[0], rango[1])
+}
+
+/**
+ * El periodo al que pertenece una fecha; el de hoy si no se pasa ninguna.
+ *
+ * La granularidad sale del hogar, igual que la moneda, porque «el periodo actual»
+ * no significa lo mismo en una instalación que presupuesta por meses que en una que
+ * lo hace por semanas.
+ */
+export function periodoDe(
+  fecha: Date = new Date(),
+  granularidad: GranularidadPeriodo = granularidadPresupuesto.value,
+): string {
+  if (granularidad === 'week') {
+    const [anyo, semana] = semanaIsoDe(fecha)
+    return `${anyo}-W${String(semana).padStart(2, '0')}`
+  }
   return `${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, '0')}`
 }
 
-/** Suma meses a un periodo `AAAA-MM`. Acepta desplazamientos negativos. */
-export function desplazarPeriodo(periodo: string, meses: number): string {
+/**
+ * Las palabras con las que se nombra un periodo dentro de una frase.
+ *
+ * «Ingresos del mes» y «Ingresos de la semana» dicen lo mismo cada una en su caso;
+ * «Ingresos del periodo» no dice ninguna de las dos y suena a documentación técnica.
+ * Y no basta con la palabra suelta porque el género cambia la preposición: *del*
+ * mes pero *de la* semana. Se resuelve una vez aquí y no en cada componente.
+ */
+export function palabrasDe(periodo: string): {
+  unidad: string
+  este: string
+  del: string
+  anterior: string
+} {
+  return granularidadDe(periodo) === 'week'
+    ? {
+        unidad: 'semana',
+        este: 'esta semana',
+        del: 'de la semana',
+        anterior: 'de la semana anterior',
+      }
+    : { unidad: 'mes', este: 'este mes', del: 'del mes', anterior: 'del mes anterior' }
+}
+
+/**
+ * Suma periodos a un periodo. Acepta desplazamientos negativos.
+ *
+ * Qué se suma lo dice el propio periodo: meses a un mes y semanas a una semana. Así
+ * las flechas de la barra lateral no tienen que saber en qué modo está el hogar.
+ */
+export function desplazarPeriodo(periodo: string, cuantos: number): string {
+  if (granularidadDe(periodo) === 'week') {
+    const rango = rangoDePeriodo(periodo)
+    if (!rango) return periodo
+    const lunes = new Date(rango[0])
+    lunes.setDate(lunes.getDate() + cuantos * 7)
+    return periodoDe(lunes, 'week')
+  }
   const [anyo, mes] = periodo.split('-').map(Number)
-  const d = new Date(anyo, mes - 1 + meses, 1)
-  return periodoDe(d)
+  return periodoDe(new Date(anyo, mes - 1 + cuantos, 1), 'month')
 }
 
 /** `hace 3 días`, `en 2 meses`. */

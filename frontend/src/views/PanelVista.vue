@@ -253,8 +253,9 @@ watch(
         <li v-for="a in asignacionesConGasto" :key="a.category_id">
           <BarraCategoria
             :asignacion="a"
-            :dia-actual="presupuesto.mes?.day_of_month"
-            :dias-del-mes="presupuesto.mes?.days_in_month"
+            :dia-actual="presupuesto.mes?.day_of_period"
+            :dias-del-periodo="presupuesto.mes?.days_in_period"
+            :periodo="presupuesto.mes?.period"
             @activar="verMovimientosDe"
             @asignar="abrirReparto"
           />

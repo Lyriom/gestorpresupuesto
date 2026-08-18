@@ -30,7 +30,13 @@ import InterruptorBase from '@/components/ui/InterruptorBase.vue'
 import SelectorBase from '@/components/ui/SelectorBase.vue'
 import AvisoFlotante from '@/components/ui/AvisoFlotante.vue'
 import { useAvisos } from '@/composables/useAvisos'
-import { etiquetaPeriodo, dinero, periodoDe } from '@/lib/formato'
+import {
+  dinero,
+  etiquetaPeriodo,
+  granularidadDe,
+  periodoDe,
+  rangoDePeriodo,
+} from '@/lib/formato'
 import { ranuraDeCategoria, useCategorias } from '@/stores/categorias'
 import { mensajeDeError } from '@/stores/comun'
 import { useSesion } from '@/stores/sesion'
@@ -41,7 +47,28 @@ const categorias = useCategorias()
 const avisos = useAvisos()
 
 const periodo = computed(() => sesion.periodoActual || periodoDe())
-const nombreMes = computed(() => etiquetaPeriodo(periodo.value).toLowerCase())
+const porSemanas = computed(() => granularidadDe(periodo.value) === 'week')
+
+/**
+ * Cómo se nombra el periodo dentro de una frase.
+ *
+ * En un mes basta con la etiqueta —«ingresos de agosto de 2026»—, pero con el rango
+ * de una semana la preposición no cuadra: «ingresos de 10 – 16 de ago» no se dice.
+ * Va entre paréntesis, que es lo único que funciona igual de bien con las dos.
+ */
+const nombrePeriodo = computed(() =>
+  porSemanas.value
+    ? `la semana (${etiquetaPeriodo(periodo.value)})`
+    : etiquetaPeriodo(periodo.value).toLowerCase(),
+)
+
+/** El primer día del periodo en ISO, que es cuando arranca el ingreso recurrente. */
+const inicioDelPeriodo = computed(() => {
+  const rango = rangoDePeriodo(periodo.value)
+  const dia = rango ? rango[0] : new Date()
+  const mes = String(dia.getMonth() + 1).padStart(2, '0')
+  return `${dia.getFullYear()}-${mes}-${String(dia.getDate()).padStart(2, '0')}`
+})
 
 const paso = ref<1 | 2 | 3>(1)
 const enviando = ref(false)
@@ -189,8 +216,10 @@ async function irAlPaso3(): Promise<void> {
           kind: 'income',
           account_id: cuentaPrincipal,
           amount: importeDeCentimos(ingreso.centimos) as string,
-          frequency: 'monthly',
-          starts_on: `${periodo.value}-01`,
+          // Quien presupuesta por semanas cobra por semanas: crear la regla en
+          // mensual metería la paga una vez al mes y el reparto no cuadraría nunca.
+          frequency: porSemanas.value ? 'weekly' : 'monthly',
+          starts_on: inicioDelPeriodo.value,
         })
       }
     }
@@ -260,7 +289,7 @@ onMounted(() => {
         </ol>
         <h1 class="titulo">
           <template v-if="paso === 1">Paso 1 de 3 · Crear tus cuentas</template>
-          <template v-else-if="paso === 2">Paso 2 de 3 · Ingresos de {{ nombreMes }}</template>
+          <template v-else-if="paso === 2">Paso 2 de 3 · Ingresos de {{ nombrePeriodo }}</template>
           <template v-else>Paso 3 de 3 · Tus primeras temáticas</template>
         </h1>
       </header>
@@ -322,14 +351,22 @@ onMounted(() => {
       <!-- Paso 2 -->
       <section v-else-if="paso === 2" class="contenido">
         <p class="intro">
-          ¿Cuánto esperas ingresar este mes? Podrás cambiarlo cualquier mes desde el Panel.
+          {{
+            porSemanas
+              ? '¿Cuánto esperas ingresar esta semana? Podrás cambiarlo cualquier semana desde el Panel.'
+              : '¿Cuánto esperas ingresar este mes? Podrás cambiarlo cualquier mes desde el Panel.'
+          }}
         </p>
 
         <ul class="filas">
           <li v-for="i in ingresos" :key="i.clave" class="fila-ingreso">
             <CampoTexto v-model="i.concepto" etiqueta="Concepto" placeholder="Nómina" />
             <CampoImporte v-model="i.centimos" etiqueta="Importe" />
-            <InterruptorBase v-model="i.recurrente" etiqueta="Repetir cada mes" tamanyo="sm" />
+            <InterruptorBase
+              v-model="i.recurrente"
+              :etiqueta="porSemanas ? 'Repetir cada semana' : 'Repetir cada mes'"
+              tamanyo="sm"
+            />
             <BotonBase
               v-if="ingresos.length > 1"
               variante="fantasma"
@@ -350,7 +387,7 @@ onMounted(() => {
         </BotonBase>
 
         <p class="total num">
-          Total de ingresos de {{ nombreMes }}
+          Total de ingresos de {{ nombrePeriodo }}
           <strong>{{ dinero(totalIngresosCentimos / 100) }}</strong>
         </p>
         <p v-if="!puedeSalirDelPaso2" class="ayuda">Sin ingresos no hay nada que repartir.</p>

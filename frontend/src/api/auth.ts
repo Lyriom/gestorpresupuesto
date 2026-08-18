@@ -9,6 +9,9 @@ import { conQuery, type InstanteISO, type Pagina, type Periodo, type UUID } from
 
 export type Tema = 'dark' | 'light' | 'system'
 
+/** De cuánto en cuánto presupuesta el hogar: `2026-08` o `2026-W33`. */
+export type GranularidadPresupuesto = 'month' | 'week'
+
 export interface Usuario {
   id: UUID
   created_at: InstanteISO
@@ -18,6 +21,8 @@ export interface Usuario {
   locale: string
   timezone: string
   currency: string
+  /** Del hogar: decide si el periodo que se pide es `2026-08` o `2026-W33`. */
+  budget_granularity: GranularidadPresupuesto
   theme: Tema
   onboarding_completed: boolean
 }

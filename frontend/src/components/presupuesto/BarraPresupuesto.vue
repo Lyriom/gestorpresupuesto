@@ -20,7 +20,15 @@ import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import { ArrowLeft, CircleAlert, Table2, TriangleAlert } from 'lucide-vue-next'
 
-import { aNumero, dinero, etiquetaPeriodo, periodoDe, porcentaje } from '@/lib/formato'
+import {
+  aNumero,
+  dinero,
+  etiquetaPeriodo,
+  palabrasDe,
+  periodoDe,
+  porcentaje,
+  rangoDePeriodo,
+} from '@/lib/formato'
 import BarraCategoria from './BarraCategoria.vue'
 import { COLOR_OTROS, colorDeCategoria } from './colores'
 import type { AsignacionTematica, CifrasMes, PresupuestoMes, TramoBarra } from './types'
@@ -29,9 +37,9 @@ const props = withDefaults(
   defineProps<{
     barra: PresupuestoMes | null
     cargando?: boolean
-    /** Día del mes para la marca de ritmo. Si no se pasa, se deduce del periodo. */
+    /** Día dentro del periodo para la marca de ritmo. Si no, se deduce del periodo. */
     diaActual?: number
-    diasDelMes?: number
+    diasDelPeriodo?: number
     /** Tope de segmentos con nombre antes de plegar en «Otros». */
     maxSegmentos?: number
     mostrarLeyenda?: boolean
@@ -297,31 +305,45 @@ const limiteIngresos = computed(() => {
 })
 
 /* ------------------------------------------------------------------ *
- * Ritmo del mes
+ * Ritmo del periodo
  * ------------------------------------------------------------------ */
+
+const DIA_EN_MS = 86_400_000
+
+/** Cómo se nombra el periodo en los textos: «del mes» o «de la semana». */
+const palabras = computed(() => palabrasDe(props.barra?.period ?? periodoDe()))
+
+/** Hoy sin hora, para poder comparar con los extremos del periodo. */
+function hoySinHora(): Date {
+  const ahora = new Date()
+  return new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate())
+}
 
 const ritmo = computed(() => {
   const periodo = props.barra?.period
   if (!periodo) return null
-  const esActual = periodo === periodoDe()
-  const [anyo, mes] = periodo.split('-').map(Number)
-  // El payload ya trae el día y los días del mes; los props solo los pisan.
-  const diasDelMes =
-    props.diasDelMes ??
-    props.barra?.days_in_month ??
-    (anyo && mes ? new Date(anyo, mes, 0).getDate() : 30)
+  // El payload ya trae el día y los días del periodo; los props solo los pisan y el
+  // rango es el último recurso. Se calcula sobre el rango del periodo y no sobre el
+  // día del mes: en la semana del 10 al 16, hoy 13 es el cuarto día de siete.
+  const rango = rangoDePeriodo(periodo)
+  const dias =
+    props.diasDelPeriodo ??
+    props.barra?.days_in_period ??
+    (rango ? Math.round((rango[1].getTime() - rango[0].getTime()) / DIA_EN_MS) + 1 : 30)
+  const hoy = hoySinHora()
+  const dentro = !!rango && hoy >= rango[0] && hoy <= rango[1]
   const diaActual =
     props.diaActual ??
-    props.barra?.day_of_month ??
-    (esActual ? new Date().getDate() : null)
-  if (!diaActual || !diasDelMes) return null
-  const dia = Math.min(Math.max(diaActual, 1), diasDelMes)
+    props.barra?.day_of_period ??
+    (dentro && rango ? Math.round((hoy.getTime() - rango[0].getTime()) / DIA_EN_MS) + 1 : null)
+  if (!diaActual || !dias) return null
+  const dia = Math.min(Math.max(diaActual, 1), dias)
   return {
     dia,
-    diasDelMes,
-    diasRestantes: Math.max(diasDelMes - dia, 0),
-    pct: (dia / diasDelMes) * 100,
-    texto: `Día ${dia} de ${diasDelMes}`,
+    diasDelPeriodo: dias,
+    diasRestantes: Math.max(dias - dia, 0),
+    pct: (dia / dias) * 100,
+    texto: `Día ${dia} de ${dias}`,
   }
 })
 
@@ -578,7 +600,7 @@ const hayCabecera = computed(() => props.mostrarCabecera && !props.anidada)
       <div class="esqueleto esqueleto--cifra" />
       <div class="esqueleto esqueleto--carril" />
       <div class="esqueleto esqueleto--leyenda" />
-      <p class="solo-lectores" role="status">Cargando el presupuesto del mes.</p>
+      <p class="solo-lectores" role="status">Cargando el presupuesto {{ palabras.del }}.</p>
     </template>
 
     <template v-else>
@@ -603,7 +625,7 @@ const hayCabecera = computed(() => props.mostrarCabecera && !props.anidada)
             <span>Disponible {{ dinero(cifras.disponible) }}</span>
           </p>
         </div>
-        <p class="etiqueta-ingresos">Ingresos del mes</p>
+        <p class="etiqueta-ingresos">Ingresos {{ palabras.del }}</p>
       </header>
 
       <!-- La barra anidada de «Otros» sustituye al carril en el sitio, sin
@@ -624,7 +646,7 @@ const hayCabecera = computed(() => props.mostrarCabecera && !props.anidada)
           :mostrar-cabecera="false"
           :mostrar-avisos="false"
           :dia-actual="props.diaActual"
-          :dias-del-mes="props.diasDelMes"
+          :dias-del-periodo="props.diasDelPeriodo"
           @activar="emit('activar', $event)"
           @reasignar="emit('reasignar', $event)"
         />
@@ -763,7 +785,7 @@ const hayCabecera = computed(() => props.mostrarCabecera && !props.anidada)
                 {{ porcentaje(tramoTooltip.anchoPct / 100) }} del presupuesto total
               </p>
               <p v-if="tramoTooltip.arrastrado !== 0" class="tooltip-linea">
-                Incluye {{ dinero(tramoTooltip.arrastrado) }} del mes anterior
+                Incluye {{ dinero(tramoTooltip.arrastrado) }} {{ palabras.anterior }}
               </p>
               <p v-if="ritmo" class="tooltip-linea">
                 Quedan {{ dinero(tramoTooltip.disponible) }} y {{ ritmo.diasRestantes }} días
@@ -810,14 +832,14 @@ const hayCabecera = computed(() => props.mostrarCabecera && !props.anidada)
           <!-- G. Ingresos sin repartir. -->
           <div v-if="sinRepartir" class="reparto-inicial">
             <p class="texto-vacio">
-              Reparte tus ingresos entre temáticas para ver en qué se te va el mes.
+              Reparte tus ingresos entre temáticas para ver en qué se te va el dinero.
             </p>
             <div class="acciones">
               <button type="button" class="boton-primario" @click="emit('repartir')">
                 Repartir presupuesto
               </button>
               <button type="button" class="boton-secundario" @click="emit('copiarMesAnterior')">
-                Usar el reparto del mes pasado
+                Usar el reparto anterior
               </button>
             </div>
           </div>
@@ -878,7 +900,8 @@ const hayCabecera = computed(() => props.mostrarCabecera && !props.anidada)
               <BarraCategoria
                 :asignacion="a"
                 :dia-actual="ritmo?.dia"
-                :dias-del-mes="ritmo?.diasDelMes"
+                :dias-del-periodo="ritmo?.diasDelPeriodo"
+                :periodo="props.barra?.period"
                 @activar="emit('activar', $event)"
                 @asignar="emit('reasignar', $event)"
               />

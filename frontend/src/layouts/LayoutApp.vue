@@ -120,8 +120,8 @@ function ir(ruta: string): void {
   cajonMovil.value = false
 }
 
-function moverPeriodo(meses: number): void {
-  emit('update:periodo', desplazarPeriodo(props.periodo, meses))
+function moverPeriodo(cuantos: number): void {
+  emit('update:periodo', desplazarPeriodo(props.periodo, cuantos))
 }
 
 useAtajos([

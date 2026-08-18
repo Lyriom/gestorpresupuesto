@@ -81,8 +81,8 @@ export interface PresupuestoMes {
   /** `max(0, allocated_total − income)`. */
   overallocated: Importe
   rollover_in_total: Importe
-  day_of_month: number
-  days_in_month: number
+  day_of_period: number
+  days_in_period: number
   allocations: AsignacionTematica[]
   /** Ya vienen redactados en español desde el backend. */
   warnings: string[]

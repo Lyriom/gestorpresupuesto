@@ -14,7 +14,7 @@
 import { computed } from 'vue'
 import { CirclePlus, TriangleAlert } from 'lucide-vue-next'
 
-import { aNumero, dinero, porcentaje } from '@/lib/formato'
+import { aNumero, dinero, palabrasDe, periodoDe, porcentaje } from '@/lib/formato'
 import { colorDeCategoria } from './colores'
 import { ETIQUETA_ESTADO, type AsignacionTematica } from './types'
 
@@ -24,12 +24,17 @@ const props = withDefaults(
     /** Si se pasa, la fila es un enlace; si no, un botón que emite `activar`. */
     href?: string
     diaActual?: number
-    diasDelMes?: number
+    diasDelPeriodo?: number
+    /** Para nombrar el periodo en los textos. Sin él se asume el de hoy. */
+    periodo?: string
     /** Oculta el nombre cuando la fila ya está dentro de la ficha de la temática. */
     mostrarNombre?: boolean
   }>(),
   { mostrarNombre: true },
 )
+
+/** «del mes» o «de la semana», según lo que se esté presupuestando. */
+const palabras = computed(() => palabrasDe(props.periodo ?? periodoDe()))
 
 const emit = defineEmits<{
   activar: [asignacion: AsignacionTematica]
@@ -63,7 +68,7 @@ const anchoExceso = computed(() => `${Math.max(0, Math.min(consumido.value, TOPE
 
 const marcaRitmo = computed(() => {
   const dia = props.diaActual
-  const dias = props.diasDelMes
+  const dias = props.diasDelPeriodo
   if (!dia || !dias || dias <= 0) return null
   return `${Math.min(Math.max(dia / dias, 0), 1) * 100}%`
 })
@@ -134,7 +139,7 @@ const descripcion = computed(() => {
         <span>{{ dinero(sobrepaso, { signoSiempre: true }) }} de más</span>
       </p>
       <p v-else-if="arrastrado !== 0" class="nota">
-        Incluye {{ dinero(arrastrado) }} arrastrados del mes anterior
+        Incluye {{ dinero(arrastrado) }} arrastrados {{ palabras.anterior }}
       </p>
       <button v-if="sinAsignacion" type="button" class="asignar" @click="emit('asignar', props.asignacion)">
         <CirclePlus :size="14" aria-hidden="true" />

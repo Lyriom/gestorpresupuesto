@@ -2,7 +2,7 @@
  * Ajustes del usuario, vistas guardadas y almacenamiento. §3.20 del contrato.
  */
 import { api } from '@/lib/api'
-import type { Tema } from './auth'
+import type { GranularidadPresupuesto, Tema } from './auth'
 import type { InstanteISO, UUID } from './comun'
 
 export type ArrastreNegativo = 'carry' | 'reset'
@@ -14,6 +14,8 @@ export interface Ajustes {
   timezone: string
   /** 0 = lunes. */
   first_day_of_week: number
+  /** De cuánto en cuánto se presupuesta. Los periodos ya guardados no se tocan. */
+  budget_granularity: GranularidadPresupuesto
   theme: Tema
   rollover_default: boolean
   rollover_negative: ArrastreNegativo

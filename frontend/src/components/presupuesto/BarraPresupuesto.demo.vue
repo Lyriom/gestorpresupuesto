@@ -123,8 +123,8 @@ function crearBarra(ingresos: number, entradas: EntradaDemo[], periodo = PERIODO
     rollover_in_total: dos(totalArrastrado),
     unassigned: dos(sinAsignar),
     overallocated: dos(Math.max(0, totalAsignado - ingresos)),
-    day_of_month: 13,
-    days_in_month: 31,
+    day_of_period: 13,
+    days_in_period: 31,
     allocations,
     warnings,
   }
@@ -370,7 +370,7 @@ function registrar(nombre: string, valor: unknown): void {
           <BarraCategoria
             :asignacion="a"
             :dia-actual="13"
-            :dias-del-mes="31"
+            :dias-del-periodo="31"
             @activar="registrar('fila activar', $event.category.name)"
             @asignar="registrar('fila asignar', $event.category.name)"
           />
@@ -379,7 +379,7 @@ function registrar(nombre: string, valor: unknown): void {
           <BarraCategoria
             :asignacion="a"
             :dia-actual="13"
-            :dias-del-mes="31"
+            :dias-del-periodo="31"
             @asignar="registrar('fila asignar', $event.category.name)"
           />
         </li>
